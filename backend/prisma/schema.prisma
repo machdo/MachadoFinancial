@@ -33,6 +33,7 @@ model Category {
   id           Int           @id @default(autoincrement())
   name         String
   color        String
+  type         String        @default("expense")
   userId       Int
   user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]

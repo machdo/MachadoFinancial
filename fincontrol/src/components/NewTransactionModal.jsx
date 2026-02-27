@@ -67,9 +67,10 @@ export default function NewTransactionModal({
   accounts = [],
   categories = [],
   apiBase = API_BASE,
+  initialType = "expense",
 }) {
   const hasAccounts = accounts.length > 0;
-  const hasCategories = categories.length > 0;
+  const normalizedInitialType = initialType === "income" ? "income" : "expense";
 
   const [step, setStep] = useState(0); // 0 tipo/valor, 1 conta, 2 categoria, 3 detalhes, 4 revisão
   const [busy, setBusy] = useState(false);
@@ -92,16 +93,24 @@ export default function NewTransactionModal({
 
   const focusRef = useRef(null);
 
+  const categoriesByType = useMemo(() => {
+    return categories.filter(
+      (category) => String(category.type || "expense") === String(type),
+    );
+  }, [categories, type]);
+
+  const hasCategoriesForType = categoriesByType.length > 0;
+
   const filteredCategories = useMemo(() => {
     const q = catQuery.trim().toLowerCase();
-    const list = categories; // Category não tem "type" no schema
+    const list = categoriesByType;
     if (!q) return list;
     return list.filter((c) =>
       String(c.name || "")
         .toLowerCase()
         .includes(q),
     );
-  }, [categories, catQuery]);
+  }, [categoriesByType, catQuery]);
 
   useEffect(() => {
     if (!open) return;
@@ -118,7 +127,7 @@ export default function NewTransactionModal({
     const defaultAcc = getDefaultAccountId() || "";
     const lastCat = localStorage.getItem(LS_LAST_CATEGORY) || "";
 
-    setType("expense");
+    setType(normalizedInitialType);
     setValueRaw("");
     setDate(todayISO());
     setDescription("");
@@ -133,16 +142,29 @@ export default function NewTransactionModal({
           : "",
     );
 
+    const categoriesForType = categories.filter(
+      (c) => String(c.type || "expense") === String(normalizedInitialType),
+    );
+
     setCategoryId(
-      categories.some((c) => String(c.id) === String(lastCat))
+      categoriesForType.some((c) => String(c.id) === String(lastCat))
         ? String(lastCat)
-        : "",
+        : categoriesForType[0]?.id
+          ? String(categoriesForType[0].id)
+          : "",
     );
 
     setStep(0);
 
     setTimeout(() => focusRef.current?.focus?.(), 0);
-  }, [open, accounts, categories]);
+  }, [open, accounts, categories, normalizedInitialType]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    if (categoriesByType.some((c) => String(c.id) === String(categoryId))) return;
+    setCategoryId(categoriesByType[0]?.id ? String(categoriesByType[0].id) : "");
+  }, [open, categoryId, categoriesByType]);
 
   useEffect(() => {
     if (!open) return;
@@ -206,7 +228,11 @@ export default function NewTransactionModal({
       return "";
     }
     if (s === 2) {
-      if (!hasCategories) return "Você precisa criar uma categoria.";
+      if (!hasCategoriesForType) {
+        return type === "income"
+          ? "Você precisa criar uma categoria de receita."
+          : "Você precisa criar uma categoria de despesa.";
+      }
       if (!categoryId) return "Selecione uma categoria.";
       return "";
     }
@@ -261,7 +287,7 @@ export default function NewTransactionModal({
       if (quickMode === "category") {
         const res = await axios.post(
           `${apiBase}/categories`,
-          { name, color: quickCategoryColor },
+          { name, color: quickCategoryColor, type },
           { headers: authHeaders() },
         );
         const created = res.data;
@@ -440,6 +466,12 @@ export default function NewTransactionModal({
                       ))}
                     </div>
                     <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      Tipo da categoria:{" "}
+                      <span className="font-semibold">
+                        {type === "income" ? "receita" : "despesa"}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       Cor selecionada:{" "}
                       <span className="font-semibold">
                         {quickCategoryColor}
@@ -593,7 +625,9 @@ export default function NewTransactionModal({
               {step === 2 && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold">Categoria</div>
+                    <div className="text-sm font-semibold">
+                      Categoria {type === "income" ? "de receita" : "de despesa"}
+                    </div>
                     <button
                       className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
                       onClick={() => {
@@ -613,12 +647,16 @@ export default function NewTransactionModal({
                     placeholder="Buscar categoria..."
                     value={catQuery}
                     onChange={(e) => setCatQuery(e.target.value)}
-                    disabled={busy || !hasCategories}
+                    disabled={busy || !hasCategoriesForType}
                   />
 
-                  {!hasCategories ? (
+                  {!hasCategoriesForType ? (
                     <div className="text-sm text-slate-500 dark:text-slate-400">
-                      Você ainda não tem categorias. Clique em{" "}
+                      Você ainda não tem categorias de{" "}
+                      <span className="font-semibold">
+                        {type === "income" ? "receita" : "despesa"}
+                      </span>
+                      . Clique em{" "}
                       <span className="font-semibold">+ Criar</span>.
                     </div>
                   ) : (

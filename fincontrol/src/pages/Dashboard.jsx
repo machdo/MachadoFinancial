@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { RefreshCcw, Plus, LogOut } from "lucide-react";
+import { RefreshCcw, LogOut, ArrowDownRight, ArrowUpRight } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import NewTransactionModal from "../components/NewTransactionModal";
@@ -23,6 +23,7 @@ export default function Dashboard({ onLogout }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [newOpen, setNewOpen] = useState(false);
+  const [newType, setNewType] = useState("expense");
 
   const pageLabel = useMemo(() => {
     return NAV_ITEMS.find((item) => item.key === activePage)?.label ?? "Dashboard";
@@ -107,6 +108,11 @@ export default function Dashboard({ onLogout }) {
     setCategories((previous) => previous.filter((category) => category.id !== id));
   }
 
+  function openNewTransaction(type = "expense") {
+    setNewType(type === "income" ? "income" : "expense");
+    setNewOpen(true);
+  }
+
   function renderPage() {
     if (loading) {
       return (
@@ -137,7 +143,7 @@ export default function Dashboard({ onLogout }) {
           transactions={transactions}
           categories={categories}
           accounts={accounts}
-          onOpenNewTransaction={() => setNewOpen(true)}
+          onOpenNewTransaction={openNewTransaction}
         />
       );
     }
@@ -203,11 +209,20 @@ export default function Dashboard({ onLogout }) {
               <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col sm:flex-wrap sm:items-center">
                 <button
                   type="button"
-                  onClick={() => setNewOpen(true)}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 sm:w-auto"
+                  onClick={() => openNewTransaction("income")}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 sm:w-auto"
                 >
-                  <Plus size={16} />
-                  Nova transacao
+                  <ArrowUpRight size={16} />
+                  Receita
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openNewTransaction("expense")}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 sm:w-auto"
+                >
+                  <ArrowDownRight size={16} />
+                  Despesa
                 </button>
 
                 <button
@@ -259,6 +274,7 @@ export default function Dashboard({ onLogout }) {
       <NewTransactionModal
         open={newOpen}
         onClose={() => setNewOpen(false)}
+        initialType={newType}
         onCreated={handleTransactionCreated}
         onAccountCreated={handleAccountCreated}
         onCategoryCreated={handleCategoryCreated}

@@ -43,6 +43,10 @@ function parseId(value) {
   return Number.isInteger(id) ? id : null;
 }
 
+function isTransactionType(value) {
+  return value === "income" || value === "expense";
+}
+
 // Conta
 app.post("/accounts", auth, async (req, res) => {
   try {
@@ -181,15 +185,39 @@ app.delete("/accounts/:id", auth, async (req, res) => {
 
 // Categoria
 app.post("/categories", auth, async (req, res) => {
-  const category = await prisma.category.create({
-    data: { ...req.body, userId: req.userId },
-  });
-  res.json(category);
+  try {
+    const { name, color, type } = req.body;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: "name is required" });
+    }
+    if (!color || !String(color).trim()) {
+      return res.status(400).json({ error: "color is required" });
+    }
+    if (!isTransactionType(type)) {
+      return res.status(400).json({ error: "type must be 'income' or 'expense'" });
+    }
+
+    const category = await prisma.category.create({
+      data: {
+        name: String(name).trim(),
+        color: String(color).trim(),
+        type: String(type),
+        userId: req.userId,
+      },
+    });
+    res.json(category);
+  } catch (err) {
+    console.error(err);
+    res
+      .status(500)
+      .json({ error: "Failed to create category", details: String(err) });
+  }
 });
 
 app.get("/categories", auth, async (req, res) => {
   const categories = await prisma.category.findMany({
     where: { userId: req.userId },
+    orderBy: [{ type: "asc" }, { name: "asc" }],
   });
   res.json(categories);
 });
@@ -204,12 +232,15 @@ app.put("/categories/:id", auth, async (req, res) => {
     });
     if (!existing) return res.status(404).json({ error: "Category not found" });
 
-    const { name, color } = req.body;
+    const { name, color, type } = req.body;
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: "name is required" });
     }
     if (!color || !String(color).trim()) {
       return res.status(400).json({ error: "color is required" });
+    }
+    if (!isTransactionType(type)) {
+      return res.status(400).json({ error: "type must be 'income' or 'expense'" });
     }
 
     const updated = await prisma.category.update({
@@ -217,6 +248,7 @@ app.put("/categories/:id", auth, async (req, res) => {
       data: {
         name: String(name).trim(),
         color: String(color).trim(),
+        type: String(type),
       },
     });
 
@@ -479,7 +511,7 @@ app.post("/transactions", auth, async (req, res) => {
     const { type, value, description, date, accountId, categoryId } = req.body;
 
     // Validações mínimas
-    if (!type || !["income", "expense"].includes(type)) {
+    if (!isTransactionType(type)) {
       return res
         .status(400)
         .json({ error: "type must be 'income' or 'expense'" });
@@ -517,6 +549,11 @@ app.post("/transactions", auth, async (req, res) => {
       return res
         .status(400)
         .json({ error: "Invalid categoryId for this user" });
+    if (cat.type !== type) {
+      return res.status(400).json({
+        error: "Category type must match transaction type",
+      });
+    }
 
     const transaction = await prisma.transaction.create({
       data: {
@@ -552,7 +589,7 @@ app.put("/transactions/:id", auth, async (req, res) => {
 
     const { type, value, description, date, accountId, categoryId } = req.body;
 
-    if (!type || !["income", "expense"].includes(type)) {
+    if (!isTransactionType(type)) {
       return res
         .status(400)
         .json({ error: "type must be 'income' or 'expense'" });
@@ -589,6 +626,11 @@ app.put("/transactions/:id", auth, async (req, res) => {
       return res
         .status(400)
         .json({ error: "Invalid categoryId for this user" });
+    if (cat.type !== type) {
+      return res.status(400).json({
+        error: "Category type must match transaction type",
+      });
+    }
 
     const updated = await prisma.transaction.update({
       where: { id },

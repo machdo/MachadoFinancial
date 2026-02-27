@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { API_BASE, authHeaders, money, ymd } from "../lib/finance";
@@ -46,6 +46,12 @@ export default function Transactions({
   const [editDescription, setEditDescription] = useState("");
   const [editAccountId, setEditAccountId] = useState("");
   const [editCategoryId, setEditCategoryId] = useState("");
+
+  const editableCategories = useMemo(() => {
+    return categories.filter(
+      (category) => String(category.type || "expense") === String(editType),
+    );
+  }, [categories, editType]);
 
   const months = useMemo(() => {
     const values = new Set(
@@ -119,6 +125,14 @@ export default function Transactions({
     setEditAccountId("");
     setEditCategoryId("");
   }
+
+  useEffect(() => {
+    if (!editingId) return;
+    if (editableCategories.some((category) => String(category.id) === String(editCategoryId))) {
+      return;
+    }
+    setEditCategoryId(editableCategories[0]?.id ? String(editableCategories[0].id) : "");
+  }, [editingId, editCategoryId, editableCategories]);
 
   async function handleSaveEdit(transactionId) {
     const value = parseMoneyInput(editValueRaw);
@@ -363,7 +377,7 @@ export default function Transactions({
                               disabled={isBusy}
                             >
                               <option value="">Categoria</option>
-                              {categories.map((category) => (
+                              {editableCategories.map((category) => (
                                 <option key={category.id} value={String(category.id)}>
                                   {category.name}
                                 </option>

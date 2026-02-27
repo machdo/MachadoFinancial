@@ -10,7 +10,7 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { ArrowDownRight, ArrowUpRight, TrendingUp, Plus } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, TrendingUp } from "lucide-react";
 import { money, ymd } from "../lib/finance";
 
 export default function DashboardHome({
@@ -135,7 +135,7 @@ export default function DashboardHome({
               {String(period.month).padStart(2, "0")}/{period.year}
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
             <button
               type="button"
               onClick={prevMonth}
@@ -152,11 +152,19 @@ export default function DashboardHome({
             </button>
             <button
               type="button"
-              onClick={onOpenNewTransaction}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              onClick={() => onOpenNewTransaction?.("income")}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
             >
-              <Plus size={16} />
-              Nova transacao
+              <ArrowUpRight size={16} />
+              Receita
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenNewTransaction?.("expense")}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+            >
+              <ArrowDownRight size={16} />
+              Despesa
             </button>
           </div>
         </div>
