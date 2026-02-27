@@ -22,7 +22,7 @@ export default function Sidebar({ activePage = "dashboard", onNavigate }) {
     <aside className="hidden md:flex md:w-64 md:flex-col md:gap-6 md:border-r md:border-slate-200 md:bg-white md:p-4 dark:md:border-slate-800 dark:md:bg-slate-950">
       <div className="flex items-center justify-between">
         <div className="text-lg font-semibold text-slate-900 dark:text-white">
-          FinControl
+          Machado Financial
         </div>
         <div className="h-2 w-2 rounded-full bg-emerald-500" title="online" />
       </div>
