@@ -506,36 +506,30 @@ export default function NewTransactionModal({
               {/* STEP 0 */}
               {step === 0 && (
                 <div className="space-y-3">
-                  <div className="text-sm font-semibold">Tipo e valor</div>
+                  <div className="text-sm font-semibold">Valor</div>
 
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400">
-                        Tipo
-                      </div>
-                      <div className="mt-2 flex gap-2">
-                        <button
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Tipo</div>
+                      <div
+                        className={[
+                          "mt-2 rounded-xl border px-3 py-3",
+                          type === "income"
+                            ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
+                            : "border-rose-200 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30",
+                        ].join(" ")}
+                      >
+                        <div
                           className={[
-                            "flex-1 rounded-xl border px-3 py-2 text-sm font-semibold",
-                            type === "expense"
-                              ? "border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900"
-                              : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900",
+                            "text-sm font-semibold",
+                            type === "income" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300",
                           ].join(" ")}
-                          onClick={() => setType("expense")}
                         >
-                          Despesa
-                        </button>
-                        <button
-                          className={[
-                            "flex-1 rounded-xl border px-3 py-2 text-sm font-semibold",
-                            type === "income"
-                              ? "border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900"
-                              : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900",
-                          ].join(" ")}
-                          onClick={() => setType("income")}
-                        >
-                          Receita
-                        </button>
+                          {type === "income" ? "Receita" : "Despesa"}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          Definido pelo botao que abriu este modal.
+                        </div>
                       </div>
                     </div>
 

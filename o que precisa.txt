@@ -1,6 +1,4 @@
 o que precisa
 
 area de investimentos completa
-mudar logo e nome
-separar categorias de receita e despesa
-date para input
+graficos do dashboard(parecidos com o do excel)
