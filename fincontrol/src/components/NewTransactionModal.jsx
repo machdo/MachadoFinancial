@@ -4,6 +4,7 @@ import { X, Plus } from "lucide-react";
 import { getDefaultAccountId } from "../lib/accountPreferences";
 import { getDescriptionSuggestionsForCategory } from "../lib/categoryDescriptions";
 import { API_BASE } from "../lib/finance";
+import FancyDateInput from "./FancyDateInput";
 
 const LS_LAST_ACCOUNT = "fincontrol:lastAccountId";
 const LS_LAST_CATEGORY = "fincontrol:lastCategoryId";
@@ -670,12 +671,11 @@ export default function NewTransactionModal({
                       <div className="text-xs text-slate-500 dark:text-slate-400">
                         Data
                       </div>
-                      <input
+                      <FancyDateInput
                         ref={focusRef}
-                        type="date"
-                        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                        className="mt-2"
                         value={date}
-                        onChange={(e) => setDate(e.target.value)}
+                        onChange={setDate}
                         disabled={busy}
                       />
                     </div>

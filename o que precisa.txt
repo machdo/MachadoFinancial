@@ -1,0 +1,6 @@
+o que precisa
+
+area de investimentos completa
+mudar logo e nome
+separar categorias de receita e despesa
+date para input

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import axios from "axios";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { API_BASE, authHeaders, money, ymd } from "../lib/finance";
+import FancyDateInput from "../components/FancyDateInput";
 
 function monthKey(dateValue) {
   const date = new Date(dateValue);
@@ -329,11 +330,10 @@ export default function Transactions({
                               inputMode="decimal"
                               disabled={isBusy}
                             />
-                            <input
-                              type="date"
-                              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-700 dark:bg-slate-950"
+                            <FancyDateInput
+                              compact
                               value={editDate}
-                              onChange={(event) => setEditDate(event.target.value)}
+                              onChange={setEditDate}
                               disabled={isBusy}
                             />
                             <input

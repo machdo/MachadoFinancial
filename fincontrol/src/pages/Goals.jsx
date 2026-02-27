@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API_BASE, authHeaders, money, todayISO, ymd } from "../lib/finance";
+import FancyDateInput from "../components/FancyDateInput";
 
 function parseNumber(value) {
   const normalized = String(value ?? "").replace(/\./g, "").replace(",", ".");
@@ -211,11 +212,9 @@ export default function Goals() {
             disabled={busy}
           />
 
-          <input
-            type="date"
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+          <FancyDateInput
             value={deadline}
-            onChange={(event) => setDeadline(event.target.value)}
+            onChange={setDeadline}
             disabled={busy}
           />
 
@@ -309,11 +308,9 @@ export default function Goals() {
                           onChange={(event) => setEditName(event.target.value)}
                           disabled={isRowBusy}
                         />
-                        <input
-                          type="date"
-                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                        <FancyDateInput
                           value={editDeadline}
-                          onChange={(event) => setEditDeadline(event.target.value)}
+                          onChange={setEditDeadline}
                           disabled={isRowBusy}
                         />
                         <input
