@@ -5,6 +5,7 @@ import {
   Wallet,
   Target,
   BarChart3,
+  CandlestickChart,
 } from "lucide-react";
 
 export const NAV_ITEMS = [
@@ -13,5 +14,6 @@ export const NAV_ITEMS = [
   { key: "categories", label: "Categorias", icon: Tags },
   { key: "accounts", label: "Contas", icon: Wallet },
   { key: "goals", label: "Metas", icon: Target },
+  { key: "investments", label: "Investimentos", icon: CandlestickChart },
   { key: "reports", label: "Relatorios", icon: BarChart3 },
 ];

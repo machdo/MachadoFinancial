@@ -10,6 +10,7 @@ import Categories from "./Categories";
 import Accounts from "./Accounts";
 import Goals from "./Goals";
 import Reports from "./Reports";
+import Investments from "./Investments";
 import { NAV_ITEMS } from "../constants/navigation";
 import { API_BASE, authHeaders } from "../lib/finance";
 
@@ -186,6 +187,10 @@ export default function Dashboard({ onLogout }) {
 
     if (activePage === "goals") {
       return <Goals />;
+    }
+
+    if (activePage === "investments") {
+      return <Investments transactions={transactions} categories={categories} />;
     }
 
     return <Reports transactions={transactions} categories={categories} />;
