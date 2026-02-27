@@ -391,29 +391,77 @@ app.delete("/goals/:id", auth, async (req, res) => {
 
 // Cadastro
 app.post("/register", async (req, res) => {
-  const { name, email, password } = req.body;
-  const hash = await bcrypt.hash(password, 10);
+  try {
+    const name = String(req.body?.name ?? "").trim();
+    const email = String(req.body?.email ?? "")
+      .trim()
+      .toLowerCase();
+    const password = String(req.body?.password ?? "");
 
-  const user = await prisma.user.create({
-    data: { name, email, password: hash },
-  });
+    if (!name) return res.status(400).json({ error: "Nome e obrigatorio." });
+    if (!email) return res.status(400).json({ error: "Email e obrigatorio." });
+    if (!password) return res.status(400).json({ error: "Senha e obrigatoria." });
+    if (password.length < 6) {
+      return res.status(400).json({ error: "A senha deve ter pelo menos 6 caracteres." });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Email invalido." });
+    }
 
-  res.json(user);
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: "Ja existe uma conta com este email." });
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: { name, email, password: hash },
+      select: { id: true, name: true, email: true },
+    });
+
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
+
+    res.status(201).json({ token, user });
+  } catch (err) {
+    if (err?.code === "P2002") {
+      return res.status(409).json({ error: "Ja existe uma conta com este email." });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Falha ao criar conta.", details: String(err) });
+  }
 });
 
 // Login
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return res.status(400).json({ error: "User not found" });
+  try {
+    const email = String(req.body?.email ?? "")
+      .trim()
+      .toLowerCase();
+    const password = String(req.body?.password ?? "");
 
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.status(400).json({ error: "Invalid password" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email e senha sao obrigatorios." });
+    }
 
-  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
-    expiresIn: "1d",
-  });
-  res.json({ token });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ error: "Usuario nao encontrado." });
+
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(400).json({ error: "Senha invalida." });
+
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
+    res.json({
+      token,
+      user: { id: user.id, name: user.name, email: user.email },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Falha no login.", details: String(err) });
+  }
 });
 
 // Criar Transação
