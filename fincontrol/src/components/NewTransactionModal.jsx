@@ -342,7 +342,7 @@ export default function NewTransactionModal({
       />
 
       {/* modal */}
-      <div className="absolute left-1/2 top-1/2 mx-auto flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+      <div className="absolute left-1/2 top-1/2 mx-auto flex max-h-[92vh] w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl sm:w-[calc(100%-2rem)] dark:border-slate-800 dark:bg-slate-950">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
           <div>
             <div className="text-sm font-semibold">Nova transação</div>
@@ -798,9 +798,9 @@ export default function NewTransactionModal({
 
         {/* footer */}
         {!quickMode && (
-          <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
+          <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
             <button
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60 sm:w-auto dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
               onClick={goBack}
               disabled={busy || step === 0}
             >
@@ -809,7 +809,7 @@ export default function NewTransactionModal({
 
             {step < 4 ? (
               <button
-                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60 sm:w-auto"
                 onClick={goNext}
                 disabled={busy}
               >
@@ -817,7 +817,7 @@ export default function NewTransactionModal({
               </button>
             ) : (
               <button
-                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60 sm:w-auto"
                 onClick={handleSave}
                 disabled={busy}
               >

@@ -190,21 +190,21 @@ export default function Dashboard({ onLogout }) {
       <div className="flex min-h-screen">
         <Sidebar activePage={activePage} onNavigate={setActivePage} />
 
-        <main className="flex-1 p-4 md:p-8">
+        <main className="min-w-0 flex-1 p-3 sm:p-4 md:p-8">
           <header className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h1 className="text-2xl font-semibold">{pageLabel}</h1>
+              <div className="min-w-0">
+                <h1 className="truncate text-xl font-semibold sm:text-2xl">{pageLabel}</h1>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
                   Controle financeiro completo em um unico painel.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col sm:flex-wrap sm:items-center">
                 <button
                   type="button"
                   onClick={() => setNewOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 sm:w-auto"
                 >
                   <Plus size={16} />
                   Nova transacao
@@ -213,7 +213,7 @@ export default function Dashboard({ onLogout }) {
                 <button
                   type="button"
                   onClick={() => loadData(false)}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-800"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-800 sm:w-auto"
                   disabled={refreshing}
                 >
                   <RefreshCcw size={16} className={refreshing ? "animate-spin" : ""} />
@@ -225,7 +225,7 @@ export default function Dashboard({ onLogout }) {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-800"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-800 sm:w-auto"
                 >
                   <LogOut size={16} />
                   Sair

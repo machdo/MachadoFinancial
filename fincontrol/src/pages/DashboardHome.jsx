@@ -129,13 +129,13 @@ export default function DashboardHome({
     <div className="space-y-4">
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
+          <div className="min-w-0">
             <div className="text-sm font-semibold">Resumo mensal</div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
               {String(period.month).padStart(2, "0")}/{period.year}
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <button
               type="button"
               onClick={prevMonth}
@@ -153,7 +153,7 @@ export default function DashboardHome({
             <button
               type="button"
               onClick={onOpenNewTransaction}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
             >
               <Plus size={16} />
               Nova transacao
@@ -187,7 +187,7 @@ export default function DashboardHome({
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader title="Despesas por categoria" subtitle="Distribuicao do mes" />
-          <div className="h-64">
+          <div className="h-56 sm:h-64">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={90} />
@@ -207,7 +207,7 @@ export default function DashboardHome({
             title="Evolucao do saldo"
             subtitle="Acumulado no mes (entradas - saidas)"
           />
-          <div className="h-64">
+          <div className="h-56 sm:h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={lineData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -225,12 +225,15 @@ export default function DashboardHome({
         <CardHeader title="Ultimas transacoes" subtitle="Mais recentes do mes" />
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {lastTransactions.map((transaction) => (
-            <div key={transaction.id} className="flex items-center justify-between py-3">
+            <div
+              key={transaction.id}
+              className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+            >
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">
                   {transaction.description || "(sem descricao)"}
                 </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">
+                <div className="text-xs text-slate-500 dark:text-slate-400 sm:truncate">
                   {ymd(transaction.date)} |{" "}
                   {transaction.type === "income" ? "Receita" : "Despesa"} |{" "}
                   {categoryName(transaction.categoryId)} |{" "}
@@ -240,7 +243,7 @@ export default function DashboardHome({
 
               <div
                 className={[
-                  "text-sm font-semibold",
+                  "shrink-0 text-sm font-semibold",
                   transaction.type === "income" ? "text-emerald-500" : "text-rose-500",
                 ].join(" ")}
               >
@@ -264,7 +267,7 @@ function Card({ children, className = "" }) {
   return (
     <section
       className={[
-        "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950",
+        "min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950",
         className,
       ].join(" ")}
     >
@@ -293,11 +296,11 @@ function StatCard({ title, value, icon, badge, tone = "blue" }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs text-slate-500 dark:text-slate-400">{title}</div>
-          <div className="mt-1 text-2xl font-semibold">{value}</div>
+          <div className="mt-1 break-words text-xl font-semibold sm:text-2xl">{value}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
           {icon}

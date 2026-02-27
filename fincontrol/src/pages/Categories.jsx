@@ -187,7 +187,7 @@ export default function Categories({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="text-sm font-semibold">Nova categoria</div>
 
         <form className="mt-3 grid gap-3 md:grid-cols-3" onSubmit={handleCreate}>
@@ -230,7 +230,7 @@ export default function Categories({
         {error && <div className="mt-3 text-sm font-medium text-rose-600">{error}</div>}
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-3 text-sm font-semibold">Categorias cadastradas</div>
 
         <div className="space-y-2">
@@ -252,43 +252,45 @@ export default function Categories({
                 className="rounded-xl border border-slate-200 px-3 py-3 dark:border-slate-800"
               >
                 {!isEditing && (
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="h-3 w-3 rounded-full border border-slate-200 dark:border-slate-800"
-                        style={{ backgroundColor: category.color || "#64748b" }}
-                      />
-                      <div>
-                        <div className="text-sm font-medium">{category.name}</div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400">
-                          {stats.count} transacoes
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span
+                          className="h-3 w-3 shrink-0 rounded-full border border-slate-200 dark:border-slate-800"
+                          style={{ backgroundColor: category.color || "#64748b" }}
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium">{category.name}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            {stats.count} transacoes
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-3">
-                      <div className="text-sm font-semibold text-rose-600">
-                        {money(stats.expenseTotal)}
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <div className="text-sm font-semibold text-rose-600">
+                          {money(stats.expenseTotal)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(category)}
+                          className="rounded-lg border border-slate-200 px-3 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
+                          disabled={isRowBusy}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(category.id)}
+                          className="rounded-lg border border-rose-200 px-3 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                          disabled={isRowBusy}
+                        >
+                          Excluir
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => startEdit(category)}
-                        className="rounded-lg border border-slate-200 px-3 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
-                        disabled={isRowBusy}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(category.id)}
-                        className="rounded-lg border border-rose-200 px-3 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                        disabled={isRowBusy}
-                      >
-                        Excluir
-                      </button>
                     </div>
 
-                    <div className="mt-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                    <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
                       <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
                         Descricoes prontas
                       </div>
@@ -335,7 +337,7 @@ export default function Categories({
                         </div>
                       )}
 
-                      <div className="mt-3 flex gap-2">
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                         <input
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
                           placeholder="Nova descricao pronta"
@@ -357,7 +359,7 @@ export default function Categories({
                         <button
                           type="button"
                           onClick={() => handleAddDescription(category)}
-                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 sm:w-auto"
                           disabled={isRowBusy}
                         >
                           Adicionar
@@ -395,7 +397,7 @@ export default function Categories({
                       ))}
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => handleSaveEdit(category.id)}

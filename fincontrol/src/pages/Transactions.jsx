@@ -203,8 +203,8 @@ export default function Transactions({
         <SummaryCard title="Saldo" value={money(totals.balance)} tone="blue" />
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <div className="grid gap-3 md:grid-cols-4">
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <input
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
             placeholder="Buscar descricao, conta, categoria..."
@@ -247,7 +247,7 @@ export default function Transactions({
         )}
 
         <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
+          <table className="min-w-[760px] text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
                 <th className="px-2 py-2 font-medium">Data</th>
@@ -291,7 +291,7 @@ export default function Transactions({
                     </td>
                     <td className="px-2 py-3 text-right">
                       {!isEditing && (
-                        <div className="flex justify-end gap-2">
+                        <div className="flex flex-wrap justify-end gap-2">
                           <button
                             type="button"
                             onClick={() => startEdit(transaction)}
@@ -370,7 +370,7 @@ export default function Transactions({
                               ))}
                             </select>
                           </div>
-                          <div className="flex justify-end gap-2">
+                          <div className="flex flex-wrap justify-end gap-2">
                             <button
                               type="button"
                               onClick={() => handleSaveEdit(transaction.id)}
@@ -424,11 +424,11 @@ function SummaryCard({ title, value, icon, tone }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs text-slate-500 dark:text-slate-400">{title}</div>
-          <div className="mt-1 text-xl font-semibold">{value}</div>
+          <div className="mt-1 break-words text-lg font-semibold sm:text-xl">{value}</div>
         </div>
         {icon && (
           <div className={["rounded-xl px-2 py-2", tones[tone] ?? tones.blue].join(" ")}>

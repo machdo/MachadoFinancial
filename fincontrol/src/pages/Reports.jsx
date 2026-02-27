@@ -80,7 +80,7 @@ export default function Reports({ transactions = [], categories = [] }) {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-3 text-sm font-semibold">Receitas vs despesas por mes</div>
-        <div className="h-64">
+        <div className="h-56 sm:h-64">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={monthly}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -95,9 +95,9 @@ export default function Reports({ transactions = [], categories = [] }) {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 lg:col-span-2">
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 lg:col-span-2">
           <div className="mb-3 text-sm font-semibold">Saldo acumulado</div>
-          <div className="h-56">
+          <div className="h-52 sm:h-56">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={cumulative}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -115,7 +115,7 @@ export default function Reports({ transactions = [], categories = [] }) {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <div className="mb-3 text-sm font-semibold">Top categorias de despesa</div>
           <div className="space-y-2">
             {topCategories.map((item) => (
@@ -147,9 +147,14 @@ function SummaryCard({ title, value, tone = "blue" }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
       <div className="text-xs text-slate-500 dark:text-slate-400">{title}</div>
-      <div className={["mt-1 text-xl font-semibold", toneText[tone] ?? toneText.blue].join(" ")}>
+      <div
+        className={[
+          "mt-1 break-words text-lg font-semibold sm:text-xl",
+          toneText[tone] ?? toneText.blue,
+        ].join(" ")}
+      >
         {value}
       </div>
     </div>

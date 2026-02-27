@@ -179,7 +179,7 @@ export default function Accounts({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="text-sm font-semibold">Nova conta</div>
 
         <form className="mt-3 grid gap-3 md:grid-cols-4" onSubmit={handleCreate}>
@@ -225,7 +225,7 @@ export default function Accounts({
         {error && <div className="mt-3 text-sm font-medium text-rose-600">{error}</div>}
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-3 text-sm font-semibold">Contas cadastradas</div>
 
         <div className="space-y-2">
@@ -242,8 +242,8 @@ export default function Accounts({
               >
                 {!isEditing && (
                   <>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
                         <div className="text-sm font-medium">
                           {account.name}
                           {String(account.id) === String(defaultAccountId) && (
@@ -256,7 +256,7 @@ export default function Accounts({
                           {account.type} | {stats.count} transacoes
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-left sm:text-right">
                         <div className="text-xs text-slate-500 dark:text-slate-400">
                           Saldo inicial
                         </div>
@@ -272,7 +272,7 @@ export default function Accounts({
                       </div>
                     </div>
 
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => startEdit(account)}
@@ -333,7 +333,7 @@ export default function Accounts({
                       Definir como conta padrao
                     </label>
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => handleSaveEdit(account.id)}
