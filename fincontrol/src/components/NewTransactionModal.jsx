@@ -3,6 +3,7 @@ import axios from "axios";
 import { X, Plus } from "lucide-react";
 import { getDefaultAccountId } from "../lib/accountPreferences";
 import { getDescriptionSuggestionsForCategory } from "../lib/categoryDescriptions";
+import { API_BASE } from "../lib/finance";
 
 const LS_LAST_ACCOUNT = "fincontrol:lastAccountId";
 const LS_LAST_CATEGORY = "fincontrol:lastCategoryId";
@@ -35,8 +36,8 @@ function clampMoneyInput(raw) {
 const ACCOUNT_TYPES = [
   { value: "checking", label: "Conta corrente" },
   { value: "wallet", label: "Carteira" },
-  { value: "savings", label: "PoupanÃ§a" },
-  { value: "credit", label: "CartÃ£o de crÃ©dito" },
+  { value: "savings", label: "Poupança" },
+  { value: "credit", label: "Cartão de crédito" },
 ];
 
 const CATEGORY_COLORS = [
@@ -64,12 +65,12 @@ export default function NewTransactionModal({
   onCategoryCreated,
   accounts = [],
   categories = [],
-  apiBase = "http://localhost:3001",
+  apiBase = API_BASE,
 }) {
   const hasAccounts = accounts.length > 0;
   const hasCategories = categories.length > 0;
 
-  const [step, setStep] = useState(0); // 0 tipo/valor, 1 conta, 2 categoria, 3 detalhes, 4 revisÃ£o
+  const [step, setStep] = useState(0); // 0 tipo/valor, 1 conta, 2 categoria, 3 detalhes, 4 revisão
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -92,7 +93,7 @@ export default function NewTransactionModal({
 
   const filteredCategories = useMemo(() => {
     const q = catQuery.trim().toLowerCase();
-    const list = categories; // Category nÃ£o tem "type" no schema
+    const list = categories; // Category não tem "type" no schema
     if (!q) return list;
     return list.filter((c) =>
       String(c.name || "")
@@ -195,16 +196,16 @@ export default function NewTransactionModal({
     if (s === 0) {
       const n = Number(valueRaw);
       if (!valueRaw || Number.isNaN(n) || n <= 0)
-        return "Informe um valor vÃ¡lido.";
+        return "Informe um valor válido.";
       return "";
     }
     if (s === 1) {
-      if (!hasAccounts) return "VocÃª precisa criar uma conta.";
+      if (!hasAccounts) return "Você precisa criar uma conta.";
       if (!accountId) return "Selecione uma conta.";
       return "";
     }
     if (s === 2) {
-      if (!hasCategories) return "VocÃª precisa criar uma categoria.";
+      if (!hasCategories) return "Você precisa criar uma categoria.";
       if (!categoryId) return "Selecione uma categoria.";
       return "";
     }
@@ -273,7 +274,7 @@ export default function NewTransactionModal({
       setBusy(false);
     } catch (e) {
       setBusy(false);
-      setErr(e?.response?.data?.error || "NÃ£o foi possÃ­vel criar.");
+      setErr(e?.response?.data?.error || "Não foi possível criar.");
     }
   }
 
@@ -312,7 +313,7 @@ export default function NewTransactionModal({
       onClose?.();
     } catch (e) {
       setBusy(false);
-      setErr(e?.response?.data?.error || "NÃ£o foi possÃ­vel salvar.");
+      setErr(e?.response?.data?.error || "Não foi possível salvar.");
     }
   }
 
@@ -343,9 +344,9 @@ export default function NewTransactionModal({
       <div className="absolute left-1/2 top-1/2 mx-auto flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
           <div>
-            <div className="text-sm font-semibold">Nova transaÃ§Ã£o</div>
+            <div className="text-sm font-semibold">Nova transação</div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
-              Etapa {step + 1} de 5 {busy ? "â€¢ salvando..." : ""}
+              Etapa {step + 1} de 5 {busy ? "- salvando..." : ""}
             </div>
           </div>
           <button
@@ -383,7 +384,7 @@ export default function NewTransactionModal({
                   ref={focusRef}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
                   placeholder={
-                    quickMode === "account" ? "Ex.: Nubank" : "Ex.: AlimentaÃ§Ã£o"
+                    quickMode === "account" ? "Ex.: Nubank" : "Ex.: Alimentação"
                   }
                   value={quickName}
                   onChange={(e) => setQuickName(e.target.value)}
@@ -523,7 +524,7 @@ export default function NewTransactionModal({
                         disabled={busy}
                       />
                       <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                        PrÃ©via:{" "}
+                        Prévia:{" "}
                         <span className="font-semibold">
                           {money(Number(valueRaw || 0))}
                         </span>
@@ -553,7 +554,7 @@ export default function NewTransactionModal({
 
                   {!hasAccounts ? (
                     <div className="text-sm text-slate-500 dark:text-slate-400">
-                      VocÃª ainda nÃ£o tem contas. Clique em{" "}
+                      Você ainda não tem contas. Clique em{" "}
                       <span className="font-semibold">+ Criar</span>.
                     </div>
                   ) : (
@@ -574,7 +575,7 @@ export default function NewTransactionModal({
                               {a.name}
                             </span>
                             <span className="block text-xs text-slate-500 dark:text-slate-400">
-                              {a.type || "â€”"}
+                              {a.type || "-"}
                             </span>
                           </span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -616,7 +617,7 @@ export default function NewTransactionModal({
 
                   {!hasCategories ? (
                     <div className="text-sm text-slate-500 dark:text-slate-400">
-                      VocÃª ainda nÃ£o tem categorias. Clique em{" "}
+                      Você ainda não tem categorias. Clique em{" "}
                       <span className="font-semibold">+ Criar</span>.
                     </div>
                   ) : (
@@ -680,12 +681,12 @@ export default function NewTransactionModal({
                     </div>
                     <div>
                       <div className="text-xs text-slate-500 dark:text-slate-400">
-                        DescriÃ§Ã£o (opcional)
+                        Descrição (opcional)
                       </div>
                       <textarea
                         className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
                         rows={3}
-                        placeholder="Ex.: almoÃ§o, uber, salÃ¡rio..."
+                        placeholder="Ex.: almoço, uber, salário..."
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         disabled={busy}
@@ -718,7 +719,7 @@ export default function NewTransactionModal({
               {/* STEP 4 */}
               {step === 4 && (
                 <div className="space-y-3">
-                  <div className="text-sm font-semibold">RevisÃ£o</div>
+                  <div className="text-sm font-semibold">Revisão</div>
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex items-start justify-between gap-3">
@@ -771,7 +772,7 @@ export default function NewTransactionModal({
                     {description?.trim() && (
                       <div className="mt-3">
                         <div className="text-xs text-slate-500 dark:text-slate-400">
-                          DescriÃ§Ã£o
+                          Descrição
                         </div>
                         <div className="text-sm font-semibold">
                           {description.trim()}
@@ -781,7 +782,7 @@ export default function NewTransactionModal({
                   </div>
 
                   <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Dicas: Enter avanÃ§a â€¢ ESC fecha â€¢ clique fora fecha
+                    Dicas: Enter avança • ESC fecha • clique fora fecha
                   </div>
                 </div>
               )}
@@ -820,7 +821,7 @@ export default function NewTransactionModal({
                 onClick={handleSave}
                 disabled={busy}
               >
-                Salvar transaÃ§Ã£o
+                Salvar transação
               </button>
             )}
           </div>
@@ -829,3 +830,5 @@ export default function NewTransactionModal({
     </div>
   );
 }
+
+

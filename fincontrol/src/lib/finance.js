@@ -1,4 +1,8 @@
-export const API_BASE = "http://localhost:3001";
+const envApiBase = (import.meta.env.VITE_API_BASE_URL || "").trim();
+
+export const API_BASE =
+  (envApiBase ? envApiBase.replace(/\/+$/, "") : "") ||
+  "http://localhost:3001";
 
 export function money(value) {
   return (value ?? 0).toLocaleString("pt-BR", {

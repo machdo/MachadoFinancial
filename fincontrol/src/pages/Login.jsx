@@ -1,12 +1,13 @@
 import { useState } from "react";
 import axios from "axios";
+import { API_BASE } from "../lib/finance";
 
 export default function Login({ setToken }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   async function handleLogin() {
-    const res = await axios.post("http://localhost:3001/login", {
+    const res = await axios.post(`${API_BASE}/login`, {
       email,
       password,
     });
