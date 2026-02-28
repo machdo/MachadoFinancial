@@ -12,7 +12,7 @@ function formatDate(dateValue) {
   return date.toLocaleString("pt-BR");
 }
 
-export default function Profile() {
+export default function Profile({ onLogout }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -28,6 +28,9 @@ export default function Profile() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -146,6 +149,40 @@ export default function Profile() {
       );
     } finally {
       setPasswordBusy(false);
+    }
+  }
+
+  async function handleDeleteAccount(event) {
+    event.preventDefault();
+    if (deleteBusy) return;
+
+    setDeleteError("");
+
+    if (!deletePassword) {
+      setDeleteError("Informe sua senha para excluir a conta.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Tem certeza que deseja excluir sua conta? Esta acao remove todos os dados e nao pode ser desfeita.",
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeleteBusy(true);
+      await axios.delete(`${API_BASE}/me`, {
+        headers: authHeaders(),
+        data: { currentPassword: deletePassword },
+      });
+      localStorage.removeItem("token");
+      if (typeof onLogout === "function") onLogout();
+      else window.location.reload();
+    } catch (requestError) {
+      setDeleteError(
+        requestError?.response?.data?.error || "Nao foi possivel excluir sua conta.",
+      );
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -288,6 +325,47 @@ export default function Profile() {
         {passwordSuccess && (
           <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
             {passwordSuccess}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-rose-300 bg-rose-50/70 p-4 shadow-sm dark:border-rose-900 dark:bg-rose-950/20">
+        <div className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+          Excluir conta
+        </div>
+        <p className="mt-1 text-xs text-rose-700/90 dark:text-rose-300/90">
+          Esta acao apaga permanentemente suas transacoes, contas, categorias e metas.
+        </p>
+
+        <form className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={handleDeleteAccount}>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-rose-700 dark:text-rose-300">
+              Confirme sua senha
+            </span>
+            <input
+              className="w-full rounded-xl border border-rose-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-500/30 dark:border-rose-900 dark:bg-slate-950"
+              type="password"
+              value={deletePassword}
+              onChange={(event) => setDeletePassword(event.target.value)}
+              disabled={deleteBusy}
+              autoComplete="current-password"
+            />
+          </label>
+
+          <div className="md:self-end">
+            <button
+              type="submit"
+              className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+              disabled={deleteBusy}
+            >
+              {deleteBusy ? "Excluindo..." : "Excluir minha conta"}
+            </button>
+          </div>
+        </form>
+
+        {deleteError && (
+          <div className="mt-3 rounded-xl border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+            {deleteError}
           </div>
         )}
       </section>

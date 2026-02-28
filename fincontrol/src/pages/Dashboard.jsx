@@ -199,7 +199,7 @@ export default function Dashboard({ onLogout }) {
     }
 
     if (activePage === "profile") {
-      return <Profile />;
+      return <Profile onLogout={handleLogout} />;
     }
 
     return (

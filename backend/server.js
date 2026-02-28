@@ -193,6 +193,39 @@ app.put("/me/password", auth, async (req, res) => {
   }
 });
 
+app.delete("/me", auth, async (req, res) => {
+  try {
+    const currentPassword = String(req.body?.currentPassword ?? "");
+    if (!currentPassword) {
+      return res.status(400).json({ error: "Informe sua senha para excluir a conta." });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, password: true },
+    });
+    if (!user) return res.status(404).json({ error: "Usuario nao encontrado." });
+
+    const currentMatches = await bcrypt.compare(currentPassword, user.password);
+    if (!currentMatches) {
+      return res.status(400).json({ error: "Senha atual invalida." });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.transaction.deleteMany({ where: { userId: req.userId } });
+      await tx.goal.deleteMany({ where: { userId: req.userId } });
+      await tx.category.deleteMany({ where: { userId: req.userId } });
+      await tx.account.deleteMany({ where: { userId: req.userId } });
+      await tx.user.delete({ where: { id: req.userId } });
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Falha ao excluir conta.", details: String(err) });
+  }
+});
+
 // Conta
 app.post("/accounts", auth, async (req, res) => {
   try {
