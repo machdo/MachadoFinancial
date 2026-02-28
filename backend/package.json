@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "migrate:deploy": "npx prisma migrate deploy"
+    "migrate:deploy": "npx prisma migrate deploy",
+    "admin:delete-user": "node scripts/delete-user.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
