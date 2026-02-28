@@ -96,6 +96,184 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
 }
 
+const AI_MAX_HISTORY = 12;
+const AI_MAX_MESSAGE_LENGTH = 1200;
+const AI_DEFAULT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+function normalizeChatMessages(rawMessages) {
+  if (!Array.isArray(rawMessages)) return [];
+
+  return rawMessages
+    .map((item) => {
+      const role = item?.role === "assistant" ? "assistant" : "user";
+      const content = String(item?.content ?? "")
+        .trim()
+        .slice(0, AI_MAX_MESSAGE_LENGTH);
+
+      if (!content) return null;
+      return { role, content };
+    })
+    .filter(Boolean)
+    .slice(-AI_MAX_HISTORY);
+}
+
+function roundMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.round(numeric * 100) / 100;
+}
+
+function extractAssistantReply(payload) {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part?.type === "text" && typeof part?.text === "string") return part.text;
+        return "";
+      })
+      .join(" ")
+      .trim();
+  }
+  return "";
+}
+
+async function buildUserFinanceSnapshot(userId) {
+  const since = new Date();
+  since.setDate(since.getDate() - 180);
+
+  const [accounts, categories, goals, transactions] = await Promise.all([
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, name: true, type: true, balance: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.category.findMany({
+      where: { userId },
+      select: { id: true, name: true, type: true },
+    }),
+    prisma.goal.findMany({
+      where: { userId },
+      select: {
+        name: true,
+        currentValue: true,
+        targetValue: true,
+        deadline: true,
+      },
+      orderBy: { deadline: "asc" },
+      take: 8,
+    }),
+    prisma.transaction.findMany({
+      where: { userId, date: { gte: since } },
+      select: {
+        id: true,
+        type: true,
+        value: true,
+        date: true,
+        accountId: true,
+        categoryId: true,
+      },
+      orderBy: { date: "asc" },
+    }),
+  ]);
+
+  const categoryMap = new Map(categories.map((item) => [item.id, item]));
+  const last30Cutoff = new Date();
+  last30Cutoff.setDate(last30Cutoff.getDate() - 30);
+
+  let incomeTotal = 0;
+  let expenseTotal = 0;
+  let incomeLast30 = 0;
+  let expenseLast30 = 0;
+
+  const expenseByCategory = new Map();
+  const monthlyMap = new Map();
+
+  for (const transaction of transactions) {
+    const value = Number(transaction.value) || 0;
+    const isIncome = transaction.type === "income";
+    const transactionDate = new Date(transaction.date);
+    const month = Number.isNaN(transactionDate.getTime())
+      ? "sem-data"
+      : transactionDate.toISOString().slice(0, 7);
+    const monthData = monthlyMap.get(month) ?? { income: 0, expense: 0 };
+
+    if (isIncome) {
+      incomeTotal += value;
+      monthData.income += value;
+      if (transactionDate >= last30Cutoff) incomeLast30 += value;
+    } else {
+      expenseTotal += value;
+      monthData.expense += value;
+      if (transactionDate >= last30Cutoff) expenseLast30 += value;
+
+      const category = categoryMap.get(transaction.categoryId);
+      const categoryName = category?.name || "Sem categoria";
+      expenseByCategory.set(categoryName, (expenseByCategory.get(categoryName) ?? 0) + value);
+    }
+
+    monthlyMap.set(month, monthData);
+  }
+
+  const topExpenseCategories = [...expenseByCategory.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, total]) => ({ name, total: roundMoney(total) }));
+
+  const monthlyNet = [...monthlyMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-6)
+    .map(([month, values]) => ({
+      month,
+      income: roundMoney(values.income),
+      expense: roundMoney(values.expense),
+      net: roundMoney(values.income - values.expense),
+    }));
+
+  const goalsSummary = goals.map((goal) => {
+    const target = Number(goal.targetValue) || 0;
+    const current = Number(goal.currentValue) || 0;
+    const progressPercent = target > 0 ? (current / target) * 100 : 0;
+
+    return {
+      name: goal.name,
+      currentValue: roundMoney(current),
+      targetValue: roundMoney(target),
+      progressPercent: roundMoney(progressPercent),
+      deadline: goal.deadline,
+    };
+  });
+
+  const totalBalance = accounts.reduce((sum, account) => sum + (Number(account.balance) || 0), 0);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    windowDays: 180,
+    accounts: {
+      totalCount: accounts.length,
+      totalBalance: roundMoney(totalBalance),
+      items: accounts.slice(0, 10).map((account) => ({
+        name: account.name,
+        type: account.type,
+        balance: roundMoney(account.balance),
+      })),
+    },
+    transactions: {
+      count: transactions.length,
+      incomeTotal: roundMoney(incomeTotal),
+      expenseTotal: roundMoney(expenseTotal),
+      netTotal: roundMoney(incomeTotal - expenseTotal),
+      incomeLast30Days: roundMoney(incomeLast30),
+      expenseLast30Days: roundMoney(expenseLast30),
+      netLast30Days: roundMoney(incomeLast30 - expenseLast30),
+      monthlyNet,
+      topExpenseCategories,
+    },
+    goals: goalsSummary,
+  };
+}
+
 // Perfil
 app.get("/me", auth, async (req, res) => {
   try {
@@ -223,6 +401,82 @@ app.delete("/me", auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Falha ao excluir conta.", details: String(err) });
+  }
+});
+
+app.post("/ai/chat", auth, async (req, res) => {
+  try {
+    const apiKey = String(process.env.OPENAI_API_KEY ?? "").trim();
+    if (!apiKey) {
+      return res.status(503).json({
+        error: "Assistente IA indisponivel. Configure OPENAI_API_KEY no backend.",
+      });
+    }
+    if (typeof fetch !== "function") {
+      return res.status(500).json({ error: "Ambiente Node sem suporte a fetch." });
+    }
+
+    const messages = normalizeChatMessages(req.body?.messages);
+    if (messages.length === 0) {
+      return res.status(400).json({ error: "Envie pelo menos uma mensagem." });
+    }
+
+    const context = await buildUserFinanceSnapshot(req.userId);
+    const systemPrompt = [
+      "Voce e o Machado AI, assistente financeiro pessoal do usuario.",
+      "Responda em portugues do Brasil, de forma clara e pratica.",
+      "Use os dados de contexto para personalizar a resposta.",
+      "Se faltar dado, diga isso explicitamente e sugira como coletar.",
+      "Nao invente retornos garantidos ou previsoes certas de investimento.",
+      "Sempre inclua riscos quando sugerir investimentos.",
+      "Priorize passos objetivos em lista numerada quando fizer recomendacoes.",
+      "Isto e educacional e nao substitui consultoria profissional.",
+    ].join(" ");
+
+    const chatMessages = [
+      { role: "system", content: systemPrompt },
+      {
+        role: "system",
+        content: `Contexto financeiro do usuario (JSON): ${JSON.stringify(context)}`,
+      },
+      ...messages,
+    ];
+
+    const openAiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: AI_DEFAULT_MODEL,
+        messages: chatMessages,
+        temperature: 0.4,
+        max_tokens: 700,
+      }),
+    });
+
+    const payload = await openAiResponse.json().catch(() => ({}));
+    if (!openAiResponse.ok) {
+      console.error("OpenAI chat error:", payload);
+      return res
+        .status(502)
+        .json({ error: "Nao foi possivel consultar a IA no momento. Tente novamente." });
+    }
+
+    const reply = extractAssistantReply(payload);
+    if (!reply) {
+      return res.status(502).json({ error: "A IA retornou uma resposta vazia." });
+    }
+
+    return res.json({
+      reply,
+      model: AI_DEFAULT_MODEL,
+      contextGeneratedAt: context.generatedAt,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Falha ao processar chat com IA.", details: String(err) });
   }
 });
 

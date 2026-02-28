@@ -2,4 +2,3 @@ o que precisa
 
 adicionar api de IA para ajudar nas financas
 graficos do dashboard(parecidos com o do excel)
-edicao de conta
