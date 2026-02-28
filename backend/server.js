@@ -8,7 +8,38 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const app = express();
 
-app.use(cors());
+function parseAllowedOrigins() {
+  const raw = process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "";
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+const allowedOrigins = parseAllowedOrigins();
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Permite chamadas server-to-server e ferramentas sem Origin
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.length === 0) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 app.get("/", (req, res) => {
