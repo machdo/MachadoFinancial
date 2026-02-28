@@ -98,7 +98,44 @@ function isValidEmail(value) {
 
 const AI_MAX_HISTORY = 12;
 const AI_MAX_MESSAGE_LENGTH = 1200;
-const AI_DEFAULT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const AI_PROVIDER = String(process.env.AI_PROVIDER || "groq")
+  .trim()
+  .toLowerCase();
+const AI_OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const AI_GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+
+function getAiProviderConfig() {
+  if (AI_PROVIDER === "openai") {
+    return {
+      name: "openai",
+      label: "OpenAI",
+      endpoint: "https://api.openai.com/v1/chat/completions",
+      apiKeyName: "OPENAI_API_KEY",
+      apiKey: String(process.env.OPENAI_API_KEY || "").trim(),
+      model: AI_OPENAI_MODEL,
+    };
+  }
+
+  if (AI_PROVIDER === "groq") {
+    return {
+      name: "groq",
+      label: "Groq",
+      endpoint: "https://api.groq.com/openai/v1/chat/completions",
+      apiKeyName: "GROQ_API_KEY",
+      apiKey: String(process.env.GROQ_API_KEY || "").trim(),
+      model: AI_GROQ_MODEL,
+    };
+  }
+
+  return {
+    name: "unsupported",
+    label: "Unsupported",
+    endpoint: "",
+    apiKeyName: "",
+    apiKey: "",
+    model: "",
+  };
+}
 
 function normalizeChatMessages(rawMessages) {
   if (!Array.isArray(rawMessages)) return [];
@@ -406,10 +443,16 @@ app.delete("/me", auth, async (req, res) => {
 
 async function handleAiChat(req, res) {
   try {
-    const apiKey = String(process.env.OPENAI_API_KEY ?? "").trim();
-    if (!apiKey) {
+    const provider = getAiProviderConfig();
+    if (provider.name === "unsupported") {
+      return res.status(500).json({
+        error: "AI_PROVIDER invalido. Use 'groq' ou 'openai'.",
+      });
+    }
+
+    if (!provider.apiKey) {
       return res.status(503).json({
-        error: "Assistente IA indisponivel. Configure OPENAI_API_KEY no backend.",
+        error: `Assistente IA indisponivel. Configure ${provider.apiKeyName} no backend.`,
       });
     }
     if (typeof fetch !== "function") {
@@ -442,57 +485,57 @@ async function handleAiChat(req, res) {
       ...messages,
     ];
 
-    const openAiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    const providerResponse = await fetch(provider.endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${provider.apiKey}`,
       },
       body: JSON.stringify({
-        model: AI_DEFAULT_MODEL,
+        model: provider.model,
         messages: chatMessages,
         temperature: 0.4,
         max_tokens: 700,
       }),
     });
 
-    const payload = await openAiResponse.json().catch(() => ({}));
-    if (!openAiResponse.ok) {
-      const openAiStatus = Number(openAiResponse.status) || 0;
-      const openAiCode = String(payload?.error?.code ?? "").trim();
-      const openAiMessage = String(payload?.error?.message ?? "").trim();
+    const payload = await providerResponse.json().catch(() => ({}));
+    if (!providerResponse.ok) {
+      const providerStatus = Number(providerResponse.status) || 0;
+      const providerCode = String(payload?.error?.code ?? "").trim();
+      const providerMessage = String(payload?.error?.message ?? "").trim();
 
-      console.error("OpenAI chat error:", {
-        status: openAiStatus,
-        code: openAiCode,
-        message: openAiMessage,
+      console.error(`${provider.label} chat error:`, {
+        status: providerStatus,
+        code: providerCode,
+        message: providerMessage,
       });
 
-      if (openAiStatus === 401) {
+      if (providerStatus === 401) {
         return res.status(503).json({
-          error: "OPENAI_API_KEY invalida ou sem permissao para este projeto.",
+          error: `${provider.apiKeyName} invalida ou sem permissao para este projeto.`,
         });
       }
 
-      if (openAiStatus === 404) {
+      if (providerStatus === 404) {
         return res.status(503).json({
-          error: `Modelo de IA '${AI_DEFAULT_MODEL}' nao encontrado. Ajuste OPENAI_MODEL no backend.`,
+          error: `Modelo de IA '${provider.model}' nao encontrado em ${provider.label}.`,
         });
       }
 
-      if (openAiStatus === 429) {
+      if (providerStatus === 429) {
         return res.status(503).json({
-          error: "Limite da OpenAI atingido. Verifique credito/faturamento e tente novamente.",
+          error: `Limite da ${provider.label} atingido. Verifique plano/uso e tente novamente.`,
         });
       }
 
-      if (openAiMessage) {
-        return res.status(502).json({ error: `Falha OpenAI: ${openAiMessage}` });
+      if (providerMessage) {
+        return res.status(502).json({ error: `Falha ${provider.label}: ${providerMessage}` });
       }
 
       return res
         .status(502)
-        .json({ error: "Nao foi possivel consultar a IA no momento. Tente novamente." });
+        .json({ error: `Nao foi possivel consultar a ${provider.label} no momento.` });
     }
 
     const reply = extractAssistantReply(payload);
@@ -502,7 +545,8 @@ async function handleAiChat(req, res) {
 
     return res.json({
       reply,
-      model: AI_DEFAULT_MODEL,
+      provider: provider.name,
+      model: provider.model,
       contextGeneratedAt: context.generatedAt,
     });
   } catch (err) {
