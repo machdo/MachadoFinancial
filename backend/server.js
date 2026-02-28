@@ -458,7 +458,38 @@ async function handleAiChat(req, res) {
 
     const payload = await openAiResponse.json().catch(() => ({}));
     if (!openAiResponse.ok) {
-      console.error("OpenAI chat error:", payload);
+      const openAiStatus = Number(openAiResponse.status) || 0;
+      const openAiCode = String(payload?.error?.code ?? "").trim();
+      const openAiMessage = String(payload?.error?.message ?? "").trim();
+
+      console.error("OpenAI chat error:", {
+        status: openAiStatus,
+        code: openAiCode,
+        message: openAiMessage,
+      });
+
+      if (openAiStatus === 401) {
+        return res.status(503).json({
+          error: "OPENAI_API_KEY invalida ou sem permissao para este projeto.",
+        });
+      }
+
+      if (openAiStatus === 404) {
+        return res.status(503).json({
+          error: `Modelo de IA '${AI_DEFAULT_MODEL}' nao encontrado. Ajuste OPENAI_MODEL no backend.`,
+        });
+      }
+
+      if (openAiStatus === 429) {
+        return res.status(503).json({
+          error: "Limite da OpenAI atingido. Verifique credito/faturamento e tente novamente.",
+        });
+      }
+
+      if (openAiMessage) {
+        return res.status(502).json({ error: `Falha OpenAI: ${openAiMessage}` });
+      }
+
       return res
         .status(502)
         .json({ error: "Nao foi possivel consultar a IA no momento. Tente novamente." });
