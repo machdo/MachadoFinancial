@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API_BASE, authHeaders, money } from "../lib/finance";
 import {
@@ -48,6 +48,12 @@ export default function Accounts({
   const [defaultAccountId, setDefaultAccountIdState] = useState(() =>
     getDefaultAccountId(),
   );
+  const [transferFromId, setTransferFromId] = useState("");
+  const [transferToId, setTransferToId] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const [transferSuccess, setTransferSuccess] = useState("");
 
   const accountStats = useMemo(() => {
     const map = new Map();
@@ -64,6 +70,22 @@ export default function Accounts({
     }
     return map;
   }, [transactions]);
+
+  useEffect(() => {
+    if (accounts.length < 2) {
+      setTransferFromId("");
+      setTransferToId("");
+      return;
+    }
+
+    if (!accounts.some((account) => String(account.id) === String(transferFromId))) {
+      setTransferFromId(String(accounts[0].id));
+    }
+
+    if (!accounts.some((account) => String(account.id) === String(transferToId))) {
+      setTransferToId(String(accounts[1]?.id ?? accounts[0]?.id ?? ""));
+    }
+  }, [accounts, transferFromId, transferToId]);
 
   async function handleCreate(event) {
     event.preventDefault();
@@ -177,6 +199,64 @@ export default function Accounts({
     }
   }
 
+  async function handleTransfer(event) {
+    event.preventDefault();
+    if (transferBusy) return;
+
+    setTransferError("");
+    setTransferSuccess("");
+
+    if (accounts.length < 2) {
+      setTransferError("Cadastre pelo menos duas contas para transferir saldo.");
+      return;
+    }
+
+    if (!transferFromId || !transferToId) {
+      setTransferError("Selecione conta de origem e conta de destino.");
+      return;
+    }
+
+    if (String(transferFromId) === String(transferToId)) {
+      setTransferError("A conta de origem deve ser diferente da conta de destino.");
+      return;
+    }
+
+    const amount = normalizeNumber(transferAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setTransferError("Informe um valor valido para transferir.");
+      return;
+    }
+
+    setTransferBusy(true);
+
+    try {
+      const response = await axios.post(
+        `${API_BASE}/accounts/transfer`,
+        {
+          fromAccountId: Number(transferFromId),
+          toAccountId: Number(transferToId),
+          amount,
+        },
+        { headers: authHeaders() },
+      );
+
+      const fromAccount = response?.data?.fromAccount;
+      const toAccount = response?.data?.toAccount;
+      if (fromAccount) onAccountUpdated?.(fromAccount);
+      if (toAccount) onAccountUpdated?.(toAccount);
+
+      setTransferAmount("");
+      setTransferSuccess(`Transferencia realizada com sucesso: ${money(amount)}.`);
+    } catch (requestError) {
+      setTransferError(
+        requestError?.response?.data?.error ||
+          "Nao foi possivel transferir saldo entre contas.",
+      );
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
@@ -223,6 +303,79 @@ export default function Accounts({
         </form>
 
         {error && <div className="mt-3 text-sm font-medium text-rose-600">{error}</div>}
+      </section>
+
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="text-sm font-semibold">Transferir saldo</div>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Mova saldo entre contas existentes sem criar transacao manual.
+        </p>
+
+        <form className="mt-3 grid gap-3 md:grid-cols-4" onSubmit={handleTransfer}>
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+            value={transferFromId}
+            onChange={(event) => {
+              setTransferFromId(event.target.value);
+              setTransferError("");
+              setTransferSuccess("");
+            }}
+            disabled={transferBusy || accounts.length < 2}
+          >
+            <option value="">Conta de origem</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+            value={transferToId}
+            onChange={(event) => {
+              setTransferToId(event.target.value);
+              setTransferError("");
+              setTransferSuccess("");
+            }}
+            disabled={transferBusy || accounts.length < 2}
+          >
+            <option value="">Conta de destino</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+
+          <input
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+            placeholder="Valor"
+            inputMode="decimal"
+            value={transferAmount}
+            onChange={(event) => {
+              setTransferAmount(event.target.value);
+              setTransferError("");
+              setTransferSuccess("");
+            }}
+            disabled={transferBusy || accounts.length < 2}
+          />
+
+          <button
+            type="submit"
+            className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+            disabled={transferBusy || accounts.length < 2}
+          >
+            {transferBusy ? "Transferindo..." : "Transferir"}
+          </button>
+        </form>
+
+        {transferError && (
+          <div className="mt-3 text-sm font-medium text-rose-600">{transferError}</div>
+        )}
+        {transferSuccess && (
+          <div className="mt-3 text-sm font-medium text-emerald-600">{transferSuccess}</div>
+        )}
       </section>
 
       <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">

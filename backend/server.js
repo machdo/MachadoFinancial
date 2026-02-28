@@ -88,6 +88,12 @@ function parseId(value) {
   return Number.isInteger(id) ? id : null;
 }
 
+function requestError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 function isTransactionType(value) {
   return value === "income" || value === "expense";
 }
@@ -600,6 +606,73 @@ app.get("/accounts", auth, async (req, res) => {
     where: { userId: req.userId },
   });
   res.json(accounts);
+});
+
+app.post("/accounts/transfer", auth, async (req, res) => {
+  try {
+    const fromAccountId = parseId(req.body?.fromAccountId);
+    const toAccountId = parseId(req.body?.toAccountId);
+    const amount = Number(req.body?.amount);
+
+    if (!fromAccountId || !toAccountId) {
+      return res.status(400).json({ error: "fromAccountId e toAccountId sao obrigatorios." });
+    }
+    if (fromAccountId === toAccountId) {
+      return res.status(400).json({ error: "Origem e destino devem ser contas diferentes." });
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "amount deve ser um numero positivo." });
+    }
+
+    let updatedFrom = null;
+    let updatedTo = null;
+
+    await prisma.$transaction(async (tx) => {
+      const [fromAccount, toAccount] = await Promise.all([
+        tx.account.findFirst({
+          where: { id: fromAccountId, userId: req.userId },
+        }),
+        tx.account.findFirst({
+          where: { id: toAccountId, userId: req.userId },
+        }),
+      ]);
+
+      if (!fromAccount || !toAccount) {
+        throw requestError(404, "Conta de origem ou destino nao encontrada.");
+      }
+
+      if (Number(fromAccount.balance) < amount) {
+        throw requestError(409, "Saldo insuficiente na conta de origem.");
+      }
+
+      [updatedFrom, updatedTo] = await Promise.all([
+        tx.account.update({
+          where: { id: fromAccountId },
+          data: { balance: { decrement: amount } },
+        }),
+        tx.account.update({
+          where: { id: toAccountId },
+          data: { balance: { increment: amount } },
+        }),
+      ]);
+    });
+
+    return res.json({
+      ok: true,
+      amount,
+      fromAccount: updatedFrom,
+      toAccount: updatedTo,
+    });
+  } catch (err) {
+    if (err?.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error(err);
+    return res.status(500).json({
+      error: "Nao foi possivel transferir saldo entre contas.",
+      details: String(err),
+    });
+  }
 });
 
 app.put("/accounts/:id", auth, async (req, res) => {

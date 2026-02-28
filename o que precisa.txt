@@ -2,4 +2,3 @@ o que precisa
 
 graficos do dashboard(parecidos com o do excel)
 adicionar troca de saldo entre contas
-ver senha na parte de login e cadastro, e tambem na aba minha conta
