@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { RefreshCcw, LogOut, ArrowDownRight, ArrowUpRight } from "lucide-react";
+import AssistantFloatingChat from "../components/AssistantFloatingChat";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import NewTransactionModal from "../components/NewTransactionModal";
@@ -11,7 +12,6 @@ import Accounts from "./Accounts";
 import Goals from "./Goals";
 import Reports from "./Reports";
 import Investments from "./Investments";
-import Assistant from "./Assistant";
 import Profile from "./Profile";
 import { NAV_ITEMS } from "../constants/navigation";
 import { API_BASE, authHeaders } from "../lib/finance";
@@ -195,10 +195,6 @@ export default function Dashboard({ onLogout }) {
       return <Investments transactions={transactions} categories={categories} />;
     }
 
-    if (activePage === "assistant") {
-      return <Assistant />;
-    }
-
     if (activePage === "reports") {
       return <Reports transactions={transactions} categories={categories} />;
     }
@@ -307,6 +303,7 @@ export default function Dashboard({ onLogout }) {
         accounts={accounts}
         categories={categories}
       />
+      <AssistantFloatingChat />
     </div>
   );
 }
