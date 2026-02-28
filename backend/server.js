@@ -8,12 +8,20 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const app = express();
 
+function normalizeOrigin(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+}
+
 function parseAllowedOrigins() {
-  const raw = process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "";
-  return raw
-    .split(",")
-    .map((item) => item.trim())
+  const values = [process.env.CORS_ORIGINS, process.env.FRONTEND_URL]
+    .filter(Boolean)
+    .flatMap((raw) => String(raw).split(","))
+    .map((item) => normalizeOrigin(item))
     .filter(Boolean);
+
+  return [...new Set(values)];
 }
 
 const allowedOrigins = parseAllowedOrigins();
@@ -22,21 +30,27 @@ const corsOptions = {
   origin(origin, callback) {
     // Permite chamadas server-to-server e ferramentas sem Origin
     if (!origin) return callback(null, true);
+    const normalizedOrigin = normalizeOrigin(origin);
 
     if (allowedOrigins.length === 0) {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes("*") || allowedOrigins.includes(normalizedOrigin)) {
       return callback(null, true);
     }
 
-    return callback(new Error(`CORS blocked for origin: ${origin}`));
+    return callback(new Error(`CORS blocked for origin: ${normalizedOrigin}`));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   optionsSuccessStatus: 204,
 };
+
+console.log(
+  "[CORS] Allowed origins:",
+  allowedOrigins.length > 0 ? allowedOrigins.join(", ") : "(all)",
+);
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
