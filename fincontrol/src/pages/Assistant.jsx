@@ -85,6 +85,13 @@ export default function Assistant() {
         { id: createId(), role: "assistant", content: reply },
       ]);
     } catch (requestError) {
+      const status = requestError?.response?.status;
+      if (status === 404) {
+        setError(
+          "Rota da IA nao encontrada no backend (404). Verifique se VITE_API_BASE_URL aponta para o servico backend e se ele foi redeployado.",
+        );
+        return;
+      }
       setError(
         requestError?.response?.data?.error ||
           requestError?.message ||
