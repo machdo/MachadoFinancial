@@ -18,6 +18,16 @@ Opcoes:
 `);
 }
 
+function databaseHostFromEnv() {
+  try {
+    const raw = String(process.env.DATABASE_URL || "").trim();
+    if (!raw) return "";
+    return new URL(raw).hostname;
+  } catch {
+    return "";
+  }
+}
+
 function parseArgs(argv) {
   const options = {
     email: "",
@@ -147,6 +157,23 @@ main()
   .catch((error) => {
     console.error("Falha ao excluir usuario:");
     console.error(error);
+
+    const message = String(error?.message || "");
+    if (message.includes("Can't reach database server")) {
+      const host = databaseHostFromEnv();
+      console.error("");
+      console.error("Diagnostico rapido:");
+      if (host) {
+        console.error(`- Host atual da DATABASE_URL: ${host}`);
+      }
+      console.error(
+        "- Se voce estiver rodando local, use a External Database URL do Render (com sslmode=require).",
+      );
+      console.error(
+        "- Se quiser usar URL interna do Render, execute este script dentro do ambiente do Render.",
+      );
+    }
+
     process.exitCode = 1;
   })
   .finally(async () => {
