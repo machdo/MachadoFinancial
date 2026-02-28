@@ -404,7 +404,7 @@ app.delete("/me", auth, async (req, res) => {
   }
 });
 
-app.post("/ai/chat", auth, async (req, res) => {
+async function handleAiChat(req, res) {
   try {
     const apiKey = String(process.env.OPENAI_API_KEY ?? "").trim();
     if (!apiKey) {
@@ -478,7 +478,10 @@ app.post("/ai/chat", auth, async (req, res) => {
     console.error(err);
     return res.status(500).json({ error: "Falha ao processar chat com IA.", details: String(err) });
   }
-});
+}
+
+app.post("/ai/chat", auth, handleAiChat);
+app.post("/api/ai/chat", auth, handleAiChat);
 
 // Conta
 app.post("/accounts", auth, async (req, res) => {

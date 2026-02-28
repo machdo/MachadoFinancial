@@ -29,6 +29,11 @@ export default function Assistant() {
 
   const canSend = useMemo(() => !busy && String(input).trim().length > 0, [busy, input]);
 
+  const aiEndpoints = useMemo(() => {
+    const candidates = [`${API_BASE}/ai/chat`, `${API_BASE}/api/ai/chat`];
+    return [...new Set(candidates)];
+  }, []);
+
   useEffect(() => {
     const element = listRef.current;
     if (!element) return;
@@ -48,16 +53,27 @@ export default function Assistant() {
     setBusy(true);
 
     try {
-      const response = await axios.post(
-        `${API_BASE}/ai/chat`,
-        {
-          messages: nextMessages
-            .filter((item) => item.role === "user" || item.role === "assistant")
-            .slice(-12)
-            .map((item) => ({ role: item.role, content: item.content })),
-        },
-        { headers: authHeaders() },
-      );
+      const payload = {
+        messages: nextMessages
+          .filter((item) => item.role === "user" || item.role === "assistant")
+          .slice(-12)
+          .map((item) => ({ role: item.role, content: item.content })),
+      };
+
+      let response = null;
+      let lastError = null;
+
+      for (const endpoint of aiEndpoints) {
+        try {
+          response = await axios.post(endpoint, payload, { headers: authHeaders() });
+          break;
+        } catch (requestError) {
+          lastError = requestError;
+          if (requestError?.response?.status !== 404) throw requestError;
+        }
+      }
+
+      if (!response) throw lastError || new Error("Falha ao consultar IA.");
 
       const reply = String(response?.data?.reply ?? "").trim();
       if (!reply) {
