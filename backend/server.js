@@ -92,6 +92,107 @@ function isTransactionType(value) {
   return value === "income" || value === "expense";
 }
 
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
+}
+
+// Perfil
+app.get("/me", auth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, name: true, email: true, createdAt: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: "Usuario nao encontrado." });
+    }
+    return res.json(user);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Falha ao carregar perfil.", details: String(err) });
+  }
+});
+
+app.put("/me", auth, async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? "").trim();
+    const email = String(req.body?.email ?? "")
+      .trim()
+      .toLowerCase();
+
+    if (!name) return res.status(400).json({ error: "Nome e obrigatorio." });
+    if (!email) return res.status(400).json({ error: "Email e obrigatorio." });
+    if (!isValidEmail(email)) return res.status(400).json({ error: "Email invalido." });
+
+    const existingEmail = await prisma.user.findFirst({
+      where: {
+        email,
+        id: { not: req.userId },
+      },
+      select: { id: true },
+    });
+    if (existingEmail) {
+      return res.status(409).json({ error: "Ja existe uma conta com este email." });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.userId },
+      data: { name, email },
+      select: { id: true, name: true, email: true, createdAt: true },
+    });
+    return res.json(updated);
+  } catch (err) {
+    if (err?.code === "P2002") {
+      return res.status(409).json({ error: "Ja existe uma conta com este email." });
+    }
+    console.error(err);
+    return res.status(500).json({ error: "Falha ao atualizar perfil.", details: String(err) });
+  }
+});
+
+app.put("/me/password", auth, async (req, res) => {
+  try {
+    const currentPassword = String(req.body?.currentPassword ?? "");
+    const newPassword = String(req.body?.newPassword ?? "");
+    const confirmPassword = String(req.body?.confirmPassword ?? "");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: "Preencha todos os campos de senha." });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "A nova senha deve ter pelo menos 6 caracteres." });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: "As senhas nao coincidem." });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: "A nova senha deve ser diferente da atual." });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, password: true },
+    });
+    if (!user) return res.status(404).json({ error: "Usuario nao encontrado." });
+
+    const currentMatches = await bcrypt.compare(currentPassword, user.password);
+    if (!currentMatches) {
+      return res.status(400).json({ error: "Senha atual invalida." });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: req.userId },
+      data: { password: hash },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Falha ao atualizar senha.", details: String(err) });
+  }
+});
+
 // Conta
 app.post("/accounts", auth, async (req, res) => {
   try {
@@ -490,7 +591,7 @@ app.post("/register", async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ error: "A senha deve ter pelo menos 6 caracteres." });
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!isValidEmail(email)) {
       return res.status(400).json({ error: "Email invalido." });
     }
 

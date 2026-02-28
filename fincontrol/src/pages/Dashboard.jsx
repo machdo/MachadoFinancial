@@ -11,6 +11,7 @@ import Accounts from "./Accounts";
 import Goals from "./Goals";
 import Reports from "./Reports";
 import Investments from "./Investments";
+import Profile from "./Profile";
 import { NAV_ITEMS } from "../constants/navigation";
 import { API_BASE, authHeaders } from "../lib/finance";
 
@@ -193,7 +194,22 @@ export default function Dashboard({ onLogout }) {
       return <Investments transactions={transactions} categories={categories} />;
     }
 
-    return <Reports transactions={transactions} categories={categories} />;
+    if (activePage === "reports") {
+      return <Reports transactions={transactions} categories={categories} />;
+    }
+
+    if (activePage === "profile") {
+      return <Profile />;
+    }
+
+    return (
+      <DashboardHome
+        transactions={transactions}
+        categories={categories}
+        accounts={accounts}
+        onOpenNewTransaction={openNewTransaction}
+      />
+    );
   }
 
   return (

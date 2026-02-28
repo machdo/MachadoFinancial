@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   Tags,
   Wallet,
+  User,
   Target,
   BarChart3,
   CandlestickChart,
@@ -16,4 +17,5 @@ export const NAV_ITEMS = [
   { key: "goals", label: "Metas", icon: Target },
   { key: "investments", label: "Investimentos", icon: CandlestickChart },
   { key: "reports", label: "Relatorios", icon: BarChart3 },
+  { key: "profile", label: "Minha conta", icon: User },
 ];
