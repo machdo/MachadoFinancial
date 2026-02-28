@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { Eye, EyeOff } from "lucide-react";
 import { API_BASE, authHeaders } from "../lib/finance";
 
 function isValidEmail(value) {
@@ -31,6 +32,10 @@ export default function Profile({ onLogout }) {
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -268,42 +273,75 @@ export default function Profile({ onLogout }) {
             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
               Senha atual
             </span>
-            <input
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
-              type="password"
-              value={currentPassword}
-              onChange={(event) => setCurrentPassword(event.target.value)}
-              disabled={passwordBusy}
-              autoComplete="current-password"
-            />
+            <div className="relative">
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                type={showCurrentPassword ? "text" : "password"}
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                disabled={passwordBusy}
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowCurrentPassword((value) => !value)}
+                disabled={passwordBusy}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 disabled:opacity-60 dark:text-slate-400 dark:hover:text-slate-200"
+                aria-label={showCurrentPassword ? "Ocultar senha atual" : "Mostrar senha atual"}
+              >
+                {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </label>
 
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
               Nova senha
             </span>
-            <input
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
-              type="password"
-              value={newPassword}
-              onChange={(event) => setNewPassword(event.target.value)}
-              disabled={passwordBusy}
-              autoComplete="new-password"
-            />
+            <div className="relative">
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                type={showNewPassword ? "text" : "password"}
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                disabled={passwordBusy}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword((value) => !value)}
+                disabled={passwordBusy}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 disabled:opacity-60 dark:text-slate-400 dark:hover:text-slate-200"
+                aria-label={showNewPassword ? "Ocultar nova senha" : "Mostrar nova senha"}
+              >
+                {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </label>
 
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
               Confirmar nova senha
             </span>
-            <input
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
-              type="password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              disabled={passwordBusy}
-              autoComplete="new-password"
-            />
+            <div className="relative">
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                disabled={passwordBusy}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((value) => !value)}
+                disabled={passwordBusy}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 disabled:opacity-60 dark:text-slate-400 dark:hover:text-slate-200"
+                aria-label={showConfirmPassword ? "Ocultar confirmacao de senha" : "Mostrar confirmacao de senha"}
+              >
+                {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </label>
 
           <div className="md:col-span-3">
@@ -342,14 +380,25 @@ export default function Profile({ onLogout }) {
             <span className="mb-1 block text-xs font-medium text-rose-700 dark:text-rose-300">
               Confirme sua senha
             </span>
-            <input
-              className="w-full rounded-xl border border-rose-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-500/30 dark:border-rose-900 dark:bg-slate-950"
-              type="password"
-              value={deletePassword}
-              onChange={(event) => setDeletePassword(event.target.value)}
-              disabled={deleteBusy}
-              autoComplete="current-password"
-            />
+            <div className="relative">
+              <input
+                className="w-full rounded-xl border border-rose-300 bg-white px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-rose-500/30 dark:border-rose-900 dark:bg-slate-950"
+                type={showDeletePassword ? "text" : "password"}
+                value={deletePassword}
+                onChange={(event) => setDeletePassword(event.target.value)}
+                disabled={deleteBusy}
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowDeletePassword((value) => !value)}
+                disabled={deleteBusy}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-rose-500 hover:text-rose-700 disabled:opacity-60 dark:text-rose-300 dark:hover:text-rose-200"
+                aria-label={showDeletePassword ? "Ocultar senha de exclusao" : "Mostrar senha de exclusao"}
+              >
+                {showDeletePassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </label>
 
           <div className="md:self-end">

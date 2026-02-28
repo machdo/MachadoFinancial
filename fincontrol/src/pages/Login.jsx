@@ -1,6 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
-import { ArrowRight, ChartColumnBig, ShieldCheck, Wallet } from "lucide-react";
+import { ArrowRight, ChartColumnBig, Eye, EyeOff, ShieldCheck, Wallet } from "lucide-react";
 import { API_BASE } from "../lib/finance";
 
 export default function Login({ setToken }) {
@@ -9,6 +9,8 @@ export default function Login({ setToken }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -41,6 +43,8 @@ export default function Login({ setToken }) {
     setError("");
     setPassword("");
     setConfirmPassword("");
+    setShowPassword(false);
+    setShowConfirmPassword(false);
   }
 
   function handleNameChange(e) {
@@ -233,15 +237,26 @@ export default function Login({ setToken }) {
                 <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Senha
                 </span>
-                <input
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20"
-                  type="password"
-                  placeholder={isRegister ? "Minimo de 6 caracteres" : "Sua senha"}
-                  value={password}
-                  onChange={handlePasswordChange}
-                  disabled={busy}
-                  autoComplete={isRegister ? "new-password" : "current-password"}
-                />
+                <div className="relative">
+                  <input
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 pr-10 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20"
+                    type={showPassword ? "text" : "password"}
+                    placeholder={isRegister ? "Minimo de 6 caracteres" : "Sua senha"}
+                    value={password}
+                    onChange={handlePasswordChange}
+                    disabled={busy}
+                    autoComplete={isRegister ? "new-password" : "current-password"}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((value) => !value)}
+                    disabled={busy}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 disabled:opacity-60"
+                    aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </label>
 
               {isRegister && (
@@ -249,15 +264,26 @@ export default function Login({ setToken }) {
                   <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Confirmar senha
                   </span>
-                  <input
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20"
-                    type="password"
-                    placeholder="Repita sua senha"
-                    value={confirmPassword}
-                    onChange={handleConfirmPasswordChange}
-                    disabled={busy}
-                    autoComplete="new-password"
-                  />
+                  <div className="relative">
+                    <input
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2.5 pr-10 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20"
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="Repita sua senha"
+                      value={confirmPassword}
+                      onChange={handleConfirmPasswordChange}
+                      disabled={busy}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((value) => !value)}
+                      disabled={busy}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 disabled:opacity-60"
+                      aria-label={showConfirmPassword ? "Ocultar confirmar senha" : "Mostrar confirmar senha"}
+                    >
+                      {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </label>
               )}
 
