@@ -468,6 +468,10 @@ export default function Investments({ transactions = [], categories = [] }) {
       .map(([type, value]) => ({ type, name: portfolioTypeLabel(type), value }))
       .sort((a, b) => b.value - a.value);
   }, [portfolioRows]);
+  const portfolioChartData = useMemo(
+    () => portfolioByType.filter((item) => item.value > 0),
+    [portfolioByType],
+  );
 
   function resetPortfolioForm() {
     setPortfolioName("");
@@ -822,6 +826,198 @@ export default function Investments({ transactions = [], categories = [] }) {
                   {item.name}
                 </span>
                 <strong>{item.value}%</strong>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader
+            title="Carteira de investimentos"
+            subtitle="Gerencie ativos, acompanhe desempenho e mantenha sua posicao atualizada."
+          />
+
+          <form onSubmit={handlePortfolioSubmit} className="grid gap-2 md:grid-cols-5">
+            <label className="block md:col-span-2">
+              <div className="mb-1 text-xs text-slate-500 dark:text-slate-400">Ativo</div>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                value={portfolioName}
+                onChange={(event) => setPortfolioName(event.target.value)}
+                placeholder="Ex: Tesouro Selic, PETR4, BTC"
+              />
+            </label>
+            <label className="block">
+              <div className="mb-1 text-xs text-slate-500 dark:text-slate-400">Tipo</div>
+              <select
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                value={portfolioType}
+                onChange={(event) => setPortfolioType(event.target.value)}
+              >
+                {PORTFOLIO_TYPES.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <InputNumber
+              label="Quantidade"
+              value={portfolioQuantityRaw}
+              onChange={setPortfolioQuantityRaw}
+              placeholder="1"
+            />
+            <InputMoney
+              label="Preco medio (R$)"
+              value={portfolioAveragePriceRaw}
+              onChange={setPortfolioAveragePriceRaw}
+              placeholder="100,00"
+            />
+            <InputMoney
+              label="Preco atual (R$)"
+              value={portfolioCurrentPriceRaw}
+              onChange={setPortfolioCurrentPriceRaw}
+              placeholder="102,50"
+            />
+            <div className="flex items-end gap-2 md:col-span-2">
+              <button
+                type="submit"
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
+              >
+                {portfolioEditingId ? "Salvar ativo" : "Adicionar ativo"}
+              </button>
+              {portfolioEditingId && (
+                <button
+                  type="button"
+                  onClick={cancelPortfolioEdit}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+
+          {portfolioError && (
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+              {portfolioError}
+            </div>
+          )}
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  <th className="px-2 py-2">Ativo</th>
+                  <th className="px-2 py-2">Tipo</th>
+                  <th className="px-2 py-2">Qtd.</th>
+                  <th className="px-2 py-2">Investido</th>
+                  <th className="px-2 py-2">Valor atual</th>
+                  <th className="px-2 py-2">Resultado</th>
+                  <th className="px-2 py-2">Acoes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {portfolioRows.map((item) => (
+                  <tr
+                    key={item.id}
+                    className="border-b border-slate-100 text-slate-700 dark:border-slate-900 dark:text-slate-200"
+                  >
+                    <td className="px-2 py-2 font-medium">{item.name}</td>
+                    <td className="px-2 py-2">{portfolioTypeLabel(item.type)}</td>
+                    <td className="px-2 py-2">{item.quantity.toLocaleString("pt-BR")}</td>
+                    <td className="px-2 py-2">{money(item.invested)}</td>
+                    <td className="px-2 py-2">{money(item.currentValue)}</td>
+                    <td className={["px-2 py-2 font-semibold", variationClass(item.result)].join(" ")}>
+                      {money(item.result)} ({percent(item.resultPercent)})
+                    </td>
+                    <td className="px-2 py-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startPortfolioEdit(item)}
+                          className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePortfolioDelete(item.id)}
+                          className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {portfolioRows.length === 0 && (
+            <div className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              Nenhum ativo cadastrado ainda. Adicione o primeiro ativo para montar sua carteira.
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Resumo da carteira"
+            subtitle="Visao consolidada de valor investido, valor atual e resultado."
+          />
+
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+            <InfoRow label="Total investido" value={money(portfolioTotals.invested)} />
+            <InfoRow label="Valor atual" value={money(portfolioTotals.currentValue)} />
+            <InfoRow
+              label="Resultado total"
+              value={`${money(portfolioTotals.result)} (${percent(portfolioTotals.resultPercent)})`}
+            />
+          </div>
+
+          <div className="mt-4 h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={portfolioChartData}
+                  dataKey="value"
+                  nameKey="name"
+                  outerRadius={80}
+                  label={(entry) => entry.name}
+                >
+                  {portfolioChartData.map((item, index) => (
+                    <Cell key={item.type} fill={EXPENSE_COLORS[index % EXPENSE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => money(value)} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          {portfolioChartData.length === 0 && (
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              Sem dados suficientes para exibir a distribuicao da carteira.
+            </div>
+          )}
+
+          <div className="mt-2 space-y-2">
+            {portfolioByType.map((item, index) => (
+              <div
+                key={item.type}
+                className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-800"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: EXPENSE_COLORS[index % EXPENSE_COLORS.length] }}
+                  />
+                  {item.name}
+                </span>
+                <strong>{money(item.value)}</strong>
               </div>
             ))}
           </div>
