@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { API_BASE, authHeaders, money, todayISO, ymd } from "../lib/finance";
+import {
+  API_BASE,
+  authHeaders,
+  dateLabel,
+  money,
+  todayISO,
+  ymd,
+} from "../lib/finance";
 import FancyDateInput from "../components/FancyDateInput";
 
 function parseNumber(value) {
@@ -257,7 +264,7 @@ export default function Goals() {
                         <div>
                           <div className="text-sm font-medium">{goal.name}</div>
                           <div className="text-xs text-slate-500 dark:text-slate-400">
-                            Prazo: {ymd(goal.deadline)}
+                            Prazo: {dateLabel(goal.deadline)}
                           </div>
                         </div>
 

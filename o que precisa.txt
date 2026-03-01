@@ -1,4 +1,3 @@
 o que precisa
 
 graficos do dashboard(parecidos com o do excel)
-adicionar troca de saldo entre contas

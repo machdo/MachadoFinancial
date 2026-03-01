@@ -10,7 +10,13 @@ function isValidEmail(value) {
 function formatDate(dateValue) {
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("pt-BR");
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function Profile({ onLogout }) {

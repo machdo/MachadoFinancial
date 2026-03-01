@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { money } from "../lib/finance";
+import { money, monthKeyLabel } from "../lib/finance";
 
 function monthKey(dateValue) {
   const date = new Date(dateValue);
@@ -26,7 +26,12 @@ export default function Reports({ transactions = [], categories = [] }) {
     for (const transaction of transactions) {
       const key = monthKey(transaction.date);
       if (!key) continue;
-      const current = map.get(key) ?? { month: key, income: 0, expense: 0 };
+      const current = map.get(key) ?? {
+        month: key,
+        monthLabel: monthKeyLabel(key),
+        income: 0,
+        expense: 0,
+      };
       if (transaction.type === "income") current.income += transaction.value;
       if (transaction.type === "expense") current.expense += transaction.value;
       map.set(key, current);
@@ -41,7 +46,14 @@ export default function Reports({ transactions = [], categories = [] }) {
   const cumulative = useMemo(() => {
     return monthly.reduce((list, item) => {
       const previous = list.length > 0 ? list[list.length - 1].cumulative : 0;
-      return [...list, { month: item.month, cumulative: previous + item.balance }];
+      return [
+        ...list,
+        {
+          month: item.month,
+          monthLabel: item.monthLabel,
+          cumulative: previous + item.balance,
+        },
+      ];
     }, []);
   }, [monthly]);
 
@@ -84,7 +96,7 @@ export default function Reports({ transactions = [], categories = [] }) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={monthly}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
+              <XAxis dataKey="monthLabel" />
               <YAxis />
               <Tooltip formatter={(value) => money(value)} />
               <Bar dataKey="income" name="Receitas" fill="#10b981" />
@@ -101,7 +113,7 @@ export default function Reports({ transactions = [], categories = [] }) {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={cumulative}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
+                <XAxis dataKey="monthLabel" />
                 <YAxis />
                 <Tooltip formatter={(value) => money(value)} />
                 <Line

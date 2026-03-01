@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { API_BASE, authHeaders, money, ymd } from "../lib/finance";
+import {
+  API_BASE,
+  authHeaders,
+  dateLabel,
+  money,
+  monthKeyLabel,
+  ymd,
+} from "../lib/finance";
 import FancyDateInput from "../components/FancyDateInput";
 
 function monthKey(dateValue) {
@@ -76,6 +83,7 @@ export default function Transactions({
           transaction.description,
           category?.name,
           account?.name,
+          dateLabel(transaction.date),
           ymd(transaction.date),
         ]
           .filter(Boolean)
@@ -244,7 +252,7 @@ export default function Transactions({
             <option value="all">Todos os meses</option>
             {months.map((month) => (
               <option key={month} value={month}>
-                {month}
+                {monthKeyLabel(month)}
               </option>
             ))}
           </select>
@@ -283,7 +291,7 @@ export default function Transactions({
                     key={transaction.id}
                     className="border-b border-slate-100 align-top dark:border-slate-900"
                   >
-                    <td className="px-2 py-3">{ymd(transaction.date)}</td>
+                    <td className="px-2 py-3">{dateLabel(transaction.date)}</td>
                     <td className="px-2 py-3">
                       {transaction.description || "(sem descricao)"}
                     </td>

@@ -403,7 +403,15 @@ export default function Investments({ transactions = [], categories = [] }) {
 
       {marketData.updatedAt && (
         <div className="text-xs text-slate-500 dark:text-slate-400">
-          Indicadores atualizados em {marketData.updatedAt.toLocaleString("pt-BR")}.
+          Indicadores atualizados em{" "}
+          {marketData.updatedAt.toLocaleString("pt-BR", {
+            day: "2-digit",
+            month: "long",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+          .
         </div>
       )}
 

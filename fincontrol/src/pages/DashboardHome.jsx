@@ -11,7 +11,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from "lucide-react";
-import { money, ymd } from "../lib/finance";
+import { dateLabel, money, monthYearLabel } from "../lib/finance";
 
 export default function DashboardHome({
   transactions = [],
@@ -132,7 +132,7 @@ export default function DashboardHome({
           <div className="min-w-0">
             <div className="text-sm font-semibold">Resumo mensal</div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
-              {String(period.month).padStart(2, "0")}/{period.year}
+              {monthYearLabel(new Date(period.year, period.month - 1, 1))}
             </div>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
@@ -242,7 +242,7 @@ export default function DashboardHome({
                   {transaction.description || "(sem descricao)"}
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 sm:truncate">
-                  {ymd(transaction.date)} |{" "}
+                  {dateLabel(transaction.date)} |{" "}
                   {transaction.type === "income" ? "Receita" : "Despesa"} |{" "}
                   {categoryName(transaction.categoryId)} |{" "}
                   {accountName(transaction.accountId)}
