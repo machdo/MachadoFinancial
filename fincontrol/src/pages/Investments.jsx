@@ -36,6 +36,63 @@ const PROFILE_OPTIONS = {
     { name: "Caixa", value: 5 },
   ],
 };
+const LS_PORTFOLIO = "fincontrol:investmentPortfolio:v1";
+const PORTFOLIO_TYPES = [
+  { value: "fixed_income", label: "Renda fixa" },
+  { value: "stocks", label: "Acoes" },
+  { value: "fiis", label: "FIIs" },
+  { value: "crypto", label: "Cripto" },
+  { value: "funds", label: "Fundos" },
+  { value: "international", label: "Exterior" },
+  { value: "other", label: "Outros" },
+];
+
+function createPortfolioId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function sanitizePortfolioItem(rawItem) {
+  const id = String(rawItem?.id ?? createPortfolioId()).trim();
+  const name = String(rawItem?.name ?? "").trim();
+  const type = String(rawItem?.type ?? "other").trim();
+  const quantity = Number(rawItem?.quantity);
+  const averagePrice = Number(rawItem?.averagePrice);
+  const currentPrice = Number(rawItem?.currentPrice);
+
+  if (!name) return null;
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  if (!Number.isFinite(averagePrice) || averagePrice < 0) return null;
+  if (!Number.isFinite(currentPrice) || currentPrice < 0) return null;
+
+  const normalizedType = PORTFOLIO_TYPES.some((item) => item.value === type)
+    ? type
+    : "other";
+
+  return {
+    id: id || createPortfolioId(),
+    name,
+    type: normalizedType,
+    quantity,
+    averagePrice,
+    currentPrice,
+  };
+}
+
+function loadPortfolioFromStorage() {
+  try {
+    const raw = localStorage.getItem(LS_PORTFOLIO);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(sanitizePortfolioItem).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function portfolioTypeLabel(value) {
+  return PORTFOLIO_TYPES.find((item) => item.value === value)?.label || "Outros";
+}
 
 function parseNumber(value, fallback = 0) {
   const cleaned = String(value ?? "")
@@ -198,6 +255,14 @@ export default function Investments({ transactions = [], categories = [] }) {
   const [reductionPercentRaw, setReductionPercentRaw] = useState("10");
   const [smartRateRaw, setSmartRateRaw] = useState("11");
   const [smartYearsRaw, setSmartYearsRaw] = useState("8");
+  const [portfolio, setPortfolio] = useState(() => loadPortfolioFromStorage());
+  const [portfolioName, setPortfolioName] = useState("");
+  const [portfolioType, setPortfolioType] = useState("fixed_income");
+  const [portfolioQuantityRaw, setPortfolioQuantityRaw] = useState("1");
+  const [portfolioAveragePriceRaw, setPortfolioAveragePriceRaw] = useState("");
+  const [portfolioCurrentPriceRaw, setPortfolioCurrentPriceRaw] = useState("");
+  const [portfolioEditingId, setPortfolioEditingId] = useState("");
+  const [portfolioError, setPortfolioError] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -241,6 +306,14 @@ export default function Investments({ transactions = [], categories = [] }) {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_PORTFOLIO, JSON.stringify(portfolio));
+    } catch {
+      // Ignora falha de escrita no storage do navegador.
+    }
+  }, [portfolio]);
 
   const monthlyFlow = useMemo(() => {
     const map = new Map();
@@ -351,6 +424,131 @@ export default function Investments({ transactions = [], categories = [] }) {
   );
 
   const allocation = PROFILE_OPTIONS[profile] ?? PROFILE_OPTIONS.moderado;
+  const portfolioRows = useMemo(() => {
+    return portfolio
+      .map((item) => {
+        const quantity = Number(item.quantity) || 0;
+        const averagePrice = Number(item.averagePrice) || 0;
+        const currentPrice = Number(item.currentPrice) || 0;
+        const invested = quantity * averagePrice;
+        const currentValue = quantity * currentPrice;
+        const result = currentValue - invested;
+        const resultPercent = invested > 0 ? (result / invested) * 100 : 0;
+
+        return {
+          ...item,
+          quantity,
+          averagePrice,
+          currentPrice,
+          invested,
+          currentValue,
+          result,
+          resultPercent,
+        };
+      })
+      .sort((a, b) => b.currentValue - a.currentValue);
+  }, [portfolio]);
+
+  const portfolioTotals = useMemo(() => {
+    const invested = portfolioRows.reduce((sum, item) => sum + item.invested, 0);
+    const currentValue = portfolioRows.reduce((sum, item) => sum + item.currentValue, 0);
+    const result = currentValue - invested;
+    const resultPercent = invested > 0 ? (result / invested) * 100 : 0;
+
+    return { invested, currentValue, result, resultPercent };
+  }, [portfolioRows]);
+
+  const portfolioByType = useMemo(() => {
+    const map = new Map();
+    for (const item of portfolioRows) {
+      map.set(item.type, (map.get(item.type) ?? 0) + item.currentValue);
+    }
+
+    return Array.from(map.entries())
+      .map(([type, value]) => ({ type, name: portfolioTypeLabel(type), value }))
+      .sort((a, b) => b.value - a.value);
+  }, [portfolioRows]);
+
+  function resetPortfolioForm() {
+    setPortfolioName("");
+    setPortfolioType("fixed_income");
+    setPortfolioQuantityRaw("1");
+    setPortfolioAveragePriceRaw("");
+    setPortfolioCurrentPriceRaw("");
+    setPortfolioEditingId("");
+  }
+
+  function startPortfolioEdit(item) {
+    setPortfolioError("");
+    setPortfolioEditingId(item.id);
+    setPortfolioName(item.name);
+    setPortfolioType(item.type);
+    setPortfolioQuantityRaw(String(item.quantity));
+    setPortfolioAveragePriceRaw(String(item.averagePrice).replace(".", ","));
+    setPortfolioCurrentPriceRaw(String(item.currentPrice).replace(".", ","));
+  }
+
+  function cancelPortfolioEdit() {
+    setPortfolioError("");
+    resetPortfolioForm();
+  }
+
+  function handlePortfolioDelete(itemId) {
+    const confirmed = window.confirm("Deseja excluir este ativo da carteira?");
+    if (!confirmed) return;
+
+    setPortfolio((previous) => previous.filter((item) => item.id !== itemId));
+    if (portfolioEditingId === itemId) {
+      resetPortfolioForm();
+    }
+  }
+
+  function handlePortfolioSubmit(event) {
+    event.preventDefault();
+    setPortfolioError("");
+
+    const name = String(portfolioName || "").trim();
+    const quantity = parseNumber(portfolioQuantityRaw, NaN);
+    const averagePrice = parseNumber(portfolioAveragePriceRaw, NaN);
+    const currentPrice = parseNumber(portfolioCurrentPriceRaw, NaN);
+
+    if (!name) {
+      setPortfolioError("Informe o nome do ativo.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setPortfolioError("Quantidade deve ser maior que zero.");
+      return;
+    }
+    if (!Number.isFinite(averagePrice) || averagePrice < 0) {
+      setPortfolioError("Preco medio invalido.");
+      return;
+    }
+    if (!Number.isFinite(currentPrice) || currentPrice < 0) {
+      setPortfolioError("Preco atual invalido.");
+      return;
+    }
+
+    const payload = {
+      id: portfolioEditingId || createPortfolioId(),
+      name,
+      type: portfolioType,
+      quantity,
+      averagePrice,
+      currentPrice,
+    };
+    const sanitized = sanitizePortfolioItem(payload);
+    if (!sanitized) {
+      setPortfolioError("Nao foi possivel salvar o ativo com os dados informados.");
+      return;
+    }
+
+    setPortfolio((previous) => {
+      if (!portfolioEditingId) return [sanitized, ...previous];
+      return previous.map((item) => (item.id === portfolioEditingId ? sanitized : item));
+    });
+    resetPortfolioForm();
+  }
 
   return (
     <div className="space-y-4">
