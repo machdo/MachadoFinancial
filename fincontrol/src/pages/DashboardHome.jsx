@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
 import {
+  Bar,
+  BarChart,
   PieChart,
   Pie,
+  Cell,
   Tooltip,
   ResponsiveContainer,
   LineChart,
@@ -12,6 +15,50 @@ import {
 } from "recharts";
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from "lucide-react";
 import { dateLabel, money, monthYearLabel } from "../lib/finance";
+
+const CHART_COLORS = [
+  "#2563eb",
+  "#0ea5e9",
+  "#14b8a6",
+  "#22c55e",
+  "#84cc16",
+  "#f59e0b",
+  "#f97316",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+];
+
+const INVESTMENT_KEYWORDS = [
+  "invest",
+  "renda fixa",
+  "tesouro",
+  "fii",
+  "fundo",
+  "acao",
+  "acoes",
+  "etf",
+  "cripto",
+  "bitcoin",
+  "previdencia",
+  "cdb",
+  "lci",
+  "lca",
+  "bdr",
+];
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isInvestmentCategoryName(categoryName) {
+  const normalized = normalizeText(categoryName);
+  if (!normalized) return false;
+  return INVESTMENT_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
 
 export default function DashboardHome({
   transactions = [],
@@ -94,6 +141,61 @@ export default function DashboardHome({
   }, [monthTransactions, period]);
 
   const lastTransactions = monthTransactions.slice(0, 8);
+
+  const categoryById = useMemo(() => {
+    return new Map(categories.map((category) => [category.id, category]));
+  }, [categories]);
+
+  const accountBalanceByBank = useMemo(() => {
+    return accounts
+      .map((account) => ({
+        name: account.name || `Conta ${account.id}`,
+        balance: Number(account.balance) || 0,
+      }))
+      .sort((a, b) => b.balance - a.balance);
+  }, [accounts]);
+
+  const spendingPercent = useMemo(() => {
+    if (totals.income <= 0) return 0;
+    return (totals.expense / totals.income) * 100;
+  }, [totals.expense, totals.income]);
+
+  const spendingPercentClamped = Math.max(0, Math.min(100, spendingPercent));
+  const spendingGaugeData = [
+    { name: "Renda gasta", value: spendingPercentClamped },
+    { name: "Renda livre", value: Math.max(0, 100 - spendingPercentClamped) },
+  ];
+
+  const incomeDivisionData = useMemo(() => {
+    const map = new Map();
+
+    for (const transaction of monthTransactions) {
+      if (transaction.type !== "income") continue;
+      const category = categoryById.get(transaction.categoryId);
+      const key = category?.name || "Sem categoria";
+      map.set(key, (map.get(key) ?? 0) + (Number(transaction.value) || 0));
+    }
+
+    return Array.from(map.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [monthTransactions, categoryById]);
+
+  const investmentDivisionData = useMemo(() => {
+    const map = new Map();
+
+    for (const transaction of monthTransactions) {
+      const category = categoryById.get(transaction.categoryId);
+      const categoryName = category?.name || "";
+      if (!isInvestmentCategoryName(categoryName)) continue;
+      const key = categoryName || "Investimentos";
+      map.set(key, (map.get(key) ?? 0) + Math.abs(Number(transaction.value) || 0));
+    }
+
+    return Array.from(map.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [monthTransactions, categoryById]);
 
   const health = useMemo(() => {
     if (totals.income <= 0) {
@@ -228,6 +330,118 @@ export default function DashboardHome({
           </div>
         </Card>
       </div>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader
+            title="Saldo da conta por banco"
+            subtitle="Saldo atual por conta cadastrada"
+          />
+          <div className="h-56 sm:h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={accountBalanceByBank}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip formatter={(value) => money(value)} />
+                <Bar dataKey="balance" name="Saldo" fill="#2563eb" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          {accountBalanceByBank.length === 0 && (
+            <div className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              Cadastre contas para visualizar este grafico.
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Porcentagem da renda gasta"
+            subtitle="Despesas do mes sobre receitas do mes"
+          />
+          <div className="h-56 sm:h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={spendingGaugeData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={55}
+                  outerRadius={90}
+                >
+                  <Cell fill="#ef4444" />
+                  <Cell fill="#22c55e" />
+                </Pie>
+                <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="text-sm">
+            <span className="font-semibold">{spendingPercent.toFixed(1)}%</span> da renda foi
+            gasta no periodo.
+          </div>
+          {totals.income <= 0 && (
+            <div className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              Sem receitas no periodo selecionado.
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Divisao de receita"
+            subtitle="Receitas do mes agrupadas por categoria"
+          />
+          <div className="h-56 sm:h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={incomeDivisionData} dataKey="value" nameKey="name" outerRadius={90}>
+                  {incomeDivisionData.map((item, index) => (
+                    <Cell key={item.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => money(value)} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          {incomeDivisionData.length === 0 && (
+            <div className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              Sem receitas no periodo.
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Divisao de investimentos"
+            subtitle="Transacoes de investimento do mes por categoria"
+          />
+          <div className="h-56 sm:h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={investmentDivisionData}
+                  dataKey="value"
+                  nameKey="name"
+                  outerRadius={90}
+                >
+                  {investmentDivisionData.map((item, index) => (
+                    <Cell key={item.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => money(value)} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          {investmentDivisionData.length === 0 && (
+            <div className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              Sem categorias de investimento no periodo. Use nomes como
+              "Investimentos", "Tesouro", "FII", "Acoes" ou "Cripto".
+            </div>
+          )}
+        </Card>
+      </section>
 
       <Card>
         <CardHeader title="Ultimas transacoes" subtitle="Mais recentes do mes" />
