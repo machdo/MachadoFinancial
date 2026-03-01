@@ -163,7 +163,11 @@ export default function DashboardHome({
   const spendingPercentClamped = Math.max(0, Math.min(100, spendingPercent));
   const spendingGaugeData = [
     { name: "Renda gasta", value: spendingPercentClamped },
+<<<<<<< HEAD
     { name: "Renda livrer", value: Math.max(0, 100 - spendingPercentClamped) },
+=======
+    { name: "Renda livres", value: Math.max(0, 100 - spendingPercentClamped) },
+>>>>>>> main
   ];
 
   const incomeDivisionData = useMemo(() => {
