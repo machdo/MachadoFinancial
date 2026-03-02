@@ -230,5 +230,15 @@ Opcoes disponiveis:
 
 Itens anotados em `o que precisa.txt`:
 - Receitas e despesas previstas.
-- Controle de credito (limite, fatura, valor pago).
+- Controle de cartao de credito:
+- Cadastro de cartao de credito.
+- Limite total.
+- Limite disponivel.
+- Melhor dia de compra.
+- Data de fechamento.
+- Controle de fatura.
+- Parcelamento automatico.
+- Controle de valor pago.
+- Faturas passadas.
+- Simulacao de impacto da fatura no fluxo.
 - Calendario financeiro.
