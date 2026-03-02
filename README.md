@@ -2,99 +2,30 @@
 
 Aplicacao de controle financeiro pessoal com frontend em React (Vite + Tailwind) e backend em Node.js (Express + Prisma + PostgreSQL).
 
-## Funcionalidades do site
+## Funcionalidades
 
-### 1) Autenticacao e conta
-- Cadastro de usuario com nome, email e senha.
-- Login com token JWT.
-- Edicao de nome e email no perfil.
-- Alteracao de senha com validacoes (senha atual, minimo de 6 caracteres, confirmacao).
-- Exclusao definitiva da conta com remocao de dados relacionados (transacoes, metas, contas, categorias, orcamentos, limites, cartoes e faturas).
+### Base do produto
+- Autenticacao com cadastro/login e perfil.
+- Dashboard com resumo de receitas, despesas e saldo.
+- CRUD de transacoes, contas, categorias, metas, orcamentos e cartoes.
+- Relatorios financeiros e assistente IA.
 
-### 2) Dashboard financeiro
-- Resumo mensal de receitas, despesas e saldo.
-- Navegacao por mes (anterior/proximo).
-- Graficos de despesas por categoria, evolucao de saldo no mes e saldo por conta.
-- Indicador de porcentagem da renda gasta.
-- Divisao de receitas por categoria.
-- Divisao de investimentos por categoria (baseado no nome da categoria).
-- Lista das ultimas transacoes do periodo.
+### Novas funcoes adicionadas
+- `Transacoes recorrentes automaticas` com regras por frequencia (`daily`, `weekly`, `monthly`, `yearly`).
+- `Parcelamento automatico` de transacoes com geracao de parcelas futuras.
+- `Anexo de comprovantes (upload)` em transacoes.
+- `Tags personalizadas` e vinculacao de tags por transacao.
+- `Importacao CSV` de extrato bancario.
+- `Importacao OFX` de extrato bancario.
+- `Conciliacao bancaria` (auto e manual, com criacao de transacao a partir de lancamento importado).
+- `Deteccao de duplicidade` de transacoes.
+- `Transferencia automatica recorrente` entre contas.
+- `Historico de alteracoes (audit log)`.
 
-### 3) Transacoes
-- Cadastro de transacao por fluxo em etapas (tipo, valor, conta, categoria, detalhes e revisao).
-- Criacao rapida de conta e categoria durante o cadastro de transacao.
-- Sugestoes de descricao por categoria.
-- Filtros por texto, tipo (receita/despesa) e mes.
-- Edicao inline de transacoes.
-- Exclusao de transacoes.
+## Estrutura do repositorio
 
-### 4) Categorias
-- CRUD de categorias com tipo (receita/despesa) e cor.
-- Exibicao de estatisticas por categoria (quantidade de transacoes e total movimentado).
-- Sugestoes de descricoes prontas por categoria.
-- Adicao/remocao de descricoes personalizadas salvas no navegador.
-
-### 5) Contas
-- CRUD de contas (nome, tipo e saldo inicial).
-- Definicao de conta padrao.
-- Transferencia de saldo entre contas (`/accounts/transfer`).
-- Estatisticas por conta (entradas, saidas e movimento).
-
-### 6) Orcamentos
-- Orcamento mensal por categoria (despesas).
-- Orcamento anual.
-- Limite mensal por conta.
-- Barra de progresso por categoria e por conta.
-- Alerta ao atingir X% configuravel.
-- Comparativo planejado vs realizado (mensal e anual).
-- Historico de orcamento por mes (ultimos 12 meses).
-
-### 7) Metas
-- CRUD de metas financeiras.
-- Campos de valor alvo, valor atual e prazo.
-- Barra de progresso por meta.
-- Resumo consolidado (alvo, acumulado e faltante).
-
-### 8) Relatorios
-- Receitas vs despesas por mes (grafico em barras).
-- Saldo acumulado por mes (grafico em linha).
-- Top categorias de despesa.
-
-### 9) Investimentos
-- Indicadores externos: SELIC, USD/BRL e Bitcoin em BRL.
-- Simulador de juros compostos.
-- Simulador de renda passiva (capital necessario e tempo estimado para a meta).
-- Simulador de aporte inteligente por corte de gastos (ultimos 90 dias).
-- Sugestao de alocacao por perfil (conservador, moderado e arrojado).
-- Gestao de carteira de investimentos (ativos, quantidade, preco medio, preco atual, resultado e distribuicao).
-
-### 10) Cartoes de credito
-- Cadastro de cartao de credito.
-- Limite total por cartao.
-- Limite disponivel calculado em tempo real.
-- Melhor dia de compra.
-- Data de fechamento.
-- Controle de fatura (criacao/atualizacao mensal).
-- Parcelamento automatico com distribuicao em faturas futuras.
-- Controle de valor pago por fatura.
-- Faturas passadas com historico.
-- Simulacao de impacto da fatura no fluxo de caixa.
-
-### 11) Assistente IA
-- Chat flutuante dentro do dashboard.
-- Prompts rapidos para analise financeira.
-- Respostas com base no contexto do usuario (contas, categorias, metas e historico financeiro).
-- Suporte a `groq` e `openai` no backend.
-
-### 12) Experiencia e interface
-- Tema claro/escuro com persistencia local.
-- Navegacao lateral no desktop e navegacao compacta no mobile.
-- Input de data customizado com calendario interativo.
-
-## Arquitetura do repositorio
-
-- `backend/`: API REST, autenticacao JWT, Prisma e PostgreSQL.
-- `fincontrol/`: frontend React com Vite, Tailwind e Recharts.
+- `backend/`: API REST, Prisma e PostgreSQL.
+- `fincontrol/`: frontend React com Vite.
 
 ## Stack tecnica
 
@@ -104,7 +35,6 @@ Aplicacao de controle financeiro pessoal com frontend em React (Vite + Tailwind)
 - Tailwind CSS
 - Axios
 - Recharts
-- Lucide React
 
 ### Backend
 - Node.js + Express
@@ -112,22 +42,14 @@ Aplicacao de controle financeiro pessoal com frontend em React (Vite + Tailwind)
 - PostgreSQL
 - JWT (`jsonwebtoken`)
 - `bcrypt`
-- CORS configuravel por ambiente
 
 ## Como rodar localmente
 
-### 1) Backend
+### Backend
 ```powershell
 cd backend
 npm install
 Copy-Item .env.example .env
-```
-
-Edite o arquivo `.env` com seus valores (principalmente `DATABASE_URL` e `JWT_SECRET`).
-
-Depois rode migracoes e suba o servidor:
-
-```powershell
 npx prisma generate
 npm run migrate:deploy
 npm run dev
@@ -135,7 +57,7 @@ npm run dev
 
 Backend padrao: `http://localhost:3001`
 
-### 2) Frontend
+### Frontend
 ```powershell
 cd fincontrol
 npm install
@@ -145,25 +67,62 @@ npm run dev
 
 Frontend padrao: `http://localhost:5173`
 
-## Variaveis de ambiente
+## Banco de dados
 
-### Backend (`backend/.env`)
-- `DATABASE_URL`: conexao com PostgreSQL.
-- `JWT_SECRET`: segredo do token JWT.
-- `PORT`: porta da API (padrao `3001`).
-- `HOST`: host da API (padrao `0.0.0.0`).
-- `CORS_ORIGINS`: origens permitidas separadas por virgula.
-- `FRONTEND_URL` (opcional): origem adicional para CORS.
-- `AI_PROVIDER`: `groq` ou `openai`.
-- `GROQ_API_KEY`: chave da Groq (quando `AI_PROVIDER=groq`).
-- `GROQ_MODEL`: modelo da Groq (padrao `llama-3.1-8b-instant`).
-- `OPENAI_API_KEY`: chave da OpenAI (quando `AI_PROVIDER=openai`).
-- `OPENAI_MODEL`: modelo da OpenAI (padrao `gpt-4o-mini`).
+Foi adicionada a migration:
 
-### Frontend (`fincontrol/.env`)
-- `VITE_API_BASE_URL`: URL base do backend (padrao local `http://localhost:3001`).
+- `backend/prisma/migrations/20260302183000_add_automation_features/migration.sql`
 
-## Endpoints principais da API
+Ela cria as entidades para:
+- tags e relacionamento `TransactionTag`
+- anexos (`TransactionAttachment`)
+- recorrencias de transacao (`RecurringTransaction`)
+- recorrencias de transferencia (`RecurringTransfer`)
+- importacao e conciliacao bancaria (`BankImportBatch`, `BankStatementEntry`)
+- trilha de auditoria (`AuditLog`)
+
+## Principais endpoints novos
+
+### Tags e anexos
+- `GET /tags`
+- `POST /tags`
+- `PUT /tags/:id`
+- `DELETE /tags/:id`
+- `PUT /transactions/:id/tags`
+- `POST /transactions/:id/attachments`
+- `GET /transactions/:id/attachments/:attachmentId`
+- `DELETE /transactions/:id/attachments/:attachmentId`
+
+### Recorrencia e parcelamento
+- `GET /transactions/recurring`
+- `POST /transactions/recurring`
+- `PUT /transactions/recurring/:id`
+- `DELETE /transactions/recurring/:id`
+- `POST /transactions/recurring/run`
+- `POST /transactions/installments`
+
+### Transferencia recorrente
+- `GET /accounts/transfer-recurring`
+- `POST /accounts/transfer-recurring`
+- `PUT /accounts/transfer-recurring/:id`
+- `DELETE /accounts/transfer-recurring/:id`
+- `POST /accounts/transfer-recurring/run`
+
+### Importacao e conciliacao
+- `POST /imports/csv`
+- `POST /imports/ofx`
+- `GET /reconciliation/entries`
+- `POST /reconciliation/auto`
+- `POST /reconciliation/:id/match`
+- `POST /reconciliation/:id/unmatch`
+- `POST /reconciliation/:id/create-transaction`
+
+### Duplicidade e auditoria
+- `GET /transactions/duplicates`
+- `GET /audit-logs`
+- `POST /automations/run`
+
+## Endpoints principais ja existentes
 
 ### Auth e perfil
 - `POST /register`
@@ -213,7 +172,7 @@ Frontend padrao: `http://localhost:5173`
 - `PUT /budgets/accounts/:id`
 - `DELETE /budgets/accounts/:id`
 
-### Cartoes de credito
+### Cartoes
 - `GET /credit-cards`
 - `POST /credit-cards`
 - `PUT /credit-cards/:id`
@@ -227,44 +186,3 @@ Frontend padrao: `http://localhost:5173`
 ### IA
 - `POST /ai/chat`
 - `POST /api/ai/chat`
-
-## Script administrativo util
-
-Remocao de usuario pelo backend:
-
-```powershell
-cd backend
-npm run admin:delete-user -- --email usuario@dominio.com --yes
-```
-
-Opcoes disponiveis:
-- `--email <valor>`
-- `--id <valor>`
-- `--yes` (obrigatorio para excluir)
-- `--dry-run` (simulacao)
-
-## Outras informacoes importantes
-
-- Os dados de sessao e preferencias sao guardados no `localStorage` do navegador.
-- O chat IA depende de chave valida no backend e de conectividade com o provider configurado.
-- Nao ha suite de testes automatizados configurada no repositorio neste momento.
-
-## Proximos itens (backlog)
-
-Itens anotados em `o que precisa.txt`:
-- Receitas e despesas previstas.
-<<<<<<< HEAD
-=======
-- Controle de cartao de credito:
-- Cadastro de cartao de credito.
-- Limite total.
-- Limite disponivel.
-- Melhor dia de compra.
-- Data de fechamento.
-- Controle de fatura.
-- Parcelamento automatico.
-- Controle de valor pago.
-- Faturas passadas.
-- Simulacao de impacto da fatura no fluxo.
->>>>>>> 70ce1bbb91b62a4b963cbf9715d9e33339bf07d1
-- Calendario financeiro.

@@ -819,6 +819,1076 @@ async function buildUserFinanceSnapshot(userId) {
   };
 }
 
+const TRANSACTION_INCLUDE = {
+  category: true,
+  attachments: {
+    select: {
+      id: true,
+      fileName: true,
+      mimeType: true,
+      sizeBytes: true,
+      createdAt: true,
+    },
+  },
+  tags: {
+    include: {
+      tag: true,
+    },
+  },
+  recurringTransaction: {
+    select: {
+      id: true,
+      frequency: true,
+      interval: true,
+      dayOfMonth: true,
+      dayOfWeek: true,
+      nextRunAt: true,
+      active: true,
+    },
+  },
+};
+
+const RECURRING_FREQUENCIES = new Set(["daily", "weekly", "monthly", "yearly"]);
+const RECONCILIATION_STATUSES = new Set(["pending", "reconciled", "ignored"]);
+const MAX_TAGS_PER_TRANSACTION = 20;
+const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 5000;
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function parseIsoDate(value, fallback = null) {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date;
+}
+
+function parseRecurringFrequency(value, fallback = "monthly") {
+  const normalized = normalizeText(value);
+  if (RECURRING_FREQUENCIES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function parsePositiveInt(value, fallback = 1, min = 1, max = 120) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
+function parseDayOfWeek(value, fallback = null) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const day = Number(value);
+  if (!Number.isInteger(day) || day < 0 || day > 6) return fallback;
+  return day;
+}
+
+function parseTagNames(raw) {
+  const values = Array.isArray(raw) ? raw : String(raw ?? "").split(",");
+  const unique = new Map();
+
+  for (const item of values) {
+    const name = String(item ?? "").trim();
+    if (!name) continue;
+    const key = normalizeText(name);
+    if (!key) continue;
+    if (unique.has(key)) continue;
+    unique.set(key, name.slice(0, 40));
+    if (unique.size >= MAX_TAGS_PER_TRANSACTION) break;
+  }
+
+  return [...unique.values()];
+}
+
+function dateOnlyKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function dayRange(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  const start = new Date(date);
+  const end = new Date(date);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+function shiftDateMonths(baseDate, offsetMonths = 0, preferredDay = null) {
+  const base = new Date(baseDate);
+  const originalDay = preferredDay ?? base.getDate();
+  const target = new Date(base.getFullYear(), base.getMonth() + offsetMonths, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(Math.max(1, originalDay), lastDay));
+  target.setHours(base.getHours(), base.getMinutes(), base.getSeconds(), base.getMilliseconds());
+  return target;
+}
+
+function nextDateByFrequency(currentDate, frequency, interval, dayOfMonth = null, dayOfWeek = null) {
+  const current = new Date(currentDate);
+  const step = Math.max(1, Number(interval) || 1);
+
+  if (frequency === "daily") {
+    current.setDate(current.getDate() + step);
+    return current;
+  }
+
+  if (frequency === "weekly") {
+    current.setDate(current.getDate() + step * 7);
+    if (Number.isInteger(dayOfWeek) && dayOfWeek >= 0 && dayOfWeek <= 6) {
+      const diff = dayOfWeek - current.getDay();
+      current.setDate(current.getDate() + diff);
+    }
+    return current;
+  }
+
+  if (frequency === "monthly") {
+    const preferredDay = parseDayOfMonth(dayOfMonth, current.getDate());
+    return shiftDateMonths(current, step, preferredDay);
+  }
+
+  if (frequency === "yearly") {
+    const target = new Date(current);
+    target.setFullYear(target.getFullYear() + step);
+    const preferredDay = parseDayOfMonth(dayOfMonth, target.getDate());
+    const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+    target.setDate(Math.min(preferredDay, lastDay));
+    return target;
+  }
+
+  return null;
+}
+
+function alignDateForRule(startDate, frequency, dayOfMonth = null, dayOfWeek = null) {
+  const start = new Date(startDate);
+  if (frequency === "monthly" || frequency === "yearly") {
+    const day = parseDayOfMonth(dayOfMonth, start.getDate());
+    const lastDay = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+    start.setDate(Math.min(day, lastDay));
+    return start;
+  }
+
+  if (frequency === "weekly" && Number.isInteger(dayOfWeek)) {
+    const diff = (dayOfWeek - start.getDay() + 7) % 7;
+    start.setDate(start.getDate() + diff);
+    return start;
+  }
+
+  return start;
+}
+
+function normalizeAttachmentBase64(raw) {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  const marker = "base64,";
+  const markerIndex = value.indexOf(marker);
+  if (markerIndex >= 0) {
+    return value.slice(markerIndex + marker.length).trim();
+  }
+  return value;
+}
+
+function parseAttachmentPayload(body) {
+  const fileName = String(body?.fileName ?? "").trim().slice(0, 180);
+  const mimeType = String(body?.mimeType ?? "application/octet-stream")
+    .trim()
+    .slice(0, 120);
+  const contentBase64 = normalizeAttachmentBase64(body?.contentBase64);
+  if (!fileName || !contentBase64) return null;
+
+  let buffer = null;
+  try {
+    buffer = Buffer.from(contentBase64, "base64");
+  } catch {
+    return null;
+  }
+
+  if (!buffer || buffer.length === 0 || buffer.length > MAX_ATTACHMENT_BYTES) {
+    return null;
+  }
+
+  return {
+    fileName,
+    mimeType,
+    contentBase64,
+    sizeBytes: buffer.length,
+  };
+}
+
+function buildEntryFingerprint(entryDate, amount, description) {
+  const datePart = dateOnlyKey(entryDate);
+  const amountPart = Number(amount).toFixed(2);
+  const descPart = normalizeText(description).replace(/[^a-z0-9 ]/g, "").slice(0, 80);
+  return `${datePart}|${amountPart}|${descPart}`;
+}
+
+function parseImportAmount(value) {
+  const raw = String(value ?? "")
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/[Rr]\$/g, "");
+
+  if (!raw) return NaN;
+
+  if (/^-?\d+,\d{2}$/.test(raw)) {
+    return Number(raw.replace(",", "."));
+  }
+
+  const normalized = raw.includes(",")
+    ? raw.replace(/\./g, "").replace(",", ".")
+    : raw;
+  return Number(normalized);
+}
+
+function parseFlexibleDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
+    const parsed = new Date(text.slice(0, 10));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(text)) {
+    const [day, month, year] = text.split("/").map((item) => Number(item));
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  if (/^\d{2}-\d{2}-\d{4}$/.test(text)) {
+    const [day, month, year] = text.split("-").map((item) => Number(item));
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  if (/^\d{8}$/.test(text)) {
+    const year = Number(text.slice(0, 4));
+    const month = Number(text.slice(4, 6));
+    const day = Number(text.slice(6, 8));
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const generic = new Date(text);
+  return Number.isNaN(generic.getTime()) ? null : generic;
+}
+
+function splitCsvLine(line, delimiter) {
+  const output = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === delimiter && !inQuotes) {
+      output.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  output.push(current);
+  return output.map((item) => item.trim());
+}
+
+function detectCsvDelimiter(headerLine) {
+  const delimiters = [",", ";", "\t"];
+  let selected = ",";
+  let bestCount = -1;
+
+  for (const delimiter of delimiters) {
+    const count = String(headerLine).split(delimiter).length - 1;
+    if (count > bestCount) {
+      bestCount = count;
+      selected = delimiter;
+    }
+  }
+
+  return selected;
+}
+
+function parseCsvEntries(content) {
+  const text = String(content ?? "");
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const delimiter = detectCsvDelimiter(lines[0]);
+  const headers = splitCsvLine(lines[0], delimiter).map((item) => normalizeText(item));
+
+  const dateIndex = headers.findIndex((name) =>
+    ["data", "date", "dt", "lancamento"].some((keyword) => name.includes(keyword)),
+  );
+  const amountIndex = headers.findIndex((name) =>
+    ["valor", "value", "amount", "quantia"].some((keyword) => name.includes(keyword)),
+  );
+  const descriptionIndex = headers.findIndex((name) =>
+    ["descricao", "description", "historico", "memo", "detalhe", "narrativa", "name"].some(
+      (keyword) => name.includes(keyword),
+    ),
+  );
+
+  if (dateIndex < 0 || amountIndex < 0) return [];
+
+  const entries = [];
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
+    const cols = splitCsvLine(lines[lineIndex], delimiter);
+    const date = parseFlexibleDate(cols[dateIndex]);
+    const amount = parseImportAmount(cols[amountIndex]);
+    const description = String(cols[descriptionIndex] ?? "").trim();
+
+    if (!date || !Number.isFinite(amount)) continue;
+
+    entries.push({
+      date,
+      amount: roundMoney(amount),
+      description,
+      fitId: null,
+    });
+  }
+
+  return entries;
+}
+
+function parseOfxDate(rawValue) {
+  const raw = String(rawValue ?? "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 8) return null;
+  const year = Number(digits.slice(0, 4));
+  const month = Number(digits.slice(4, 6));
+  const day = Number(digits.slice(6, 8));
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function extractOfxTag(block, tagName) {
+  const regex = new RegExp(`<${tagName}>([^<\\r\\n]+)`, "i");
+  const match = String(block ?? "").match(regex);
+  return String(match?.[1] ?? "").trim();
+}
+
+function parseOfxEntries(content) {
+  const text = String(content ?? "");
+  const blockRegex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
+  const entries = [];
+
+  let match = blockRegex.exec(text);
+  while (match) {
+    const block = match[1];
+    const date = parseOfxDate(extractOfxTag(block, "DTPOSTED"));
+    const amount = parseImportAmount(extractOfxTag(block, "TRNAMT"));
+    const description =
+      extractOfxTag(block, "MEMO") || extractOfxTag(block, "NAME") || "LANCAMENTO OFX";
+    const fitId = extractOfxTag(block, "FITID") || null;
+
+    if (date && Number.isFinite(amount)) {
+      entries.push({
+        date,
+        amount: roundMoney(amount),
+        description,
+        fitId,
+      });
+    }
+
+    match = blockRegex.exec(text);
+  }
+
+  return entries;
+}
+
+function transactionTypeFromAmount(amount) {
+  return Number(amount) >= 0 ? "income" : "expense";
+}
+
+function transactionValueFromAmount(amount) {
+  return roundMoney(Math.abs(Number(amount) || 0));
+}
+
+function scoreDescriptionMatch(a, b) {
+  const left = normalizeText(a);
+  const right = normalizeText(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.8;
+
+  const leftTokens = new Set(left.split(" ").filter((token) => token.length > 2));
+  const rightTokens = new Set(right.split(" ").filter((token) => token.length > 2));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let common = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) common += 1;
+  }
+
+  return common / Math.max(leftTokens.size, rightTokens.size);
+}
+
+async function writeAuditLog(
+  dbClient,
+  { userId, transactionId = null, entityType, entityId, action, beforeData = null, afterData = null, metadata = null },
+) {
+  try {
+    await dbClient.auditLog.create({
+      data: {
+        userId,
+        transactionId,
+        entityType: String(entityType || "unknown"),
+        entityId: String(entityId ?? ""),
+        action: String(action || "unknown"),
+        beforeData,
+        afterData,
+        metadata,
+      },
+    });
+  } catch (err) {
+    console.error("Falha ao gravar audit log:", err);
+  }
+}
+
+function toTagPayload(tag) {
+  return {
+    id: tag.id,
+    name: tag.name,
+    color: tag.color,
+    createdAt: tag.createdAt,
+    updatedAt: tag.updatedAt,
+  };
+}
+
+function toTransactionPayload(transaction) {
+  const tags = Array.isArray(transaction.tags)
+    ? transaction.tags
+        .map((link) => link?.tag)
+        .filter(Boolean)
+        .map((tag) => toTagPayload(tag))
+    : [];
+
+  return {
+    ...transaction,
+    tags,
+    attachments: Array.isArray(transaction.attachments) ? transaction.attachments : [],
+  };
+}
+
+async function ensureTagsByName(dbClient, userId, rawNames) {
+  const names = parseTagNames(rawNames);
+  if (names.length === 0) return [];
+
+  const existing = await dbClient.tag.findMany({
+    where: {
+      userId,
+      name: { in: names },
+    },
+  });
+
+  const existingByName = new Map(
+    existing.map((tag) => [normalizeText(tag.name), tag]),
+  );
+
+  const createdTags = [];
+  for (const name of names) {
+    const key = normalizeText(name);
+    if (existingByName.has(key)) continue;
+
+    const created = await dbClient.tag.create({
+      data: {
+        userId,
+        name,
+      },
+    });
+    existingByName.set(key, created);
+    createdTags.push(created);
+  }
+
+  const ordered = names
+    .map((name) => existingByName.get(normalizeText(name)))
+    .filter(Boolean);
+
+  return ordered.length > 0 ? ordered : createdTags;
+}
+
+async function replaceTransactionTags(dbClient, userId, transactionId, rawTagNames) {
+  const tags = await ensureTagsByName(dbClient, userId, rawTagNames);
+  await dbClient.transactionTag.deleteMany({
+    where: { userId, transactionId },
+  });
+
+  if (tags.length > 0) {
+    await dbClient.transactionTag.createMany({
+      data: tags.map((tag) => ({
+        userId,
+        transactionId,
+        tagId: tag.id,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  return tags;
+}
+
+async function loadTransactionOrFail(userId, transactionId) {
+  const transaction = await prisma.transaction.findFirst({
+    where: { id: transactionId, userId },
+    include: TRANSACTION_INCLUDE,
+  });
+  if (!transaction) {
+    throw requestError(404, "Transacao nao encontrada.");
+  }
+  return transaction;
+}
+
+async function processRecurringTransactions(userId) {
+  const now = new Date();
+  const dueRules = await prisma.recurringTransaction.findMany({
+    where: {
+      userId,
+      active: true,
+      nextRunAt: { lte: now },
+    },
+    orderBy: [{ nextRunAt: "asc" }],
+    take: 100,
+  });
+
+  let generated = 0;
+  let processed = 0;
+  let deactivated = 0;
+
+  for (const rule of dueRules) {
+    processed += 1;
+    let nextRunAt = new Date(rule.nextRunAt);
+    let lastRunAt = rule.lastRunAt ? new Date(rule.lastRunAt) : null;
+    let active = true;
+    let remainingInstallments =
+      rule.installmentsRemaining === null ? null : Number(rule.installmentsRemaining);
+    let guard = 0;
+
+    const [account, category] = await Promise.all([
+      prisma.account.findFirst({
+        where: { id: rule.accountId, userId },
+        select: { id: true },
+      }),
+      prisma.category.findFirst({
+        where: { id: rule.categoryId, userId },
+        select: { id: true, type: true },
+      }),
+    ]);
+
+    if (!account || !category || category.type !== rule.type) {
+      active = false;
+      deactivated += 1;
+      await writeAuditLog(prisma, {
+        userId,
+        entityType: "recurringTransaction",
+        entityId: rule.id,
+        action: "auto_deactivated",
+        metadata: {
+          reason: "missing_account_or_category",
+          accountFound: Boolean(account),
+          categoryFound: Boolean(category),
+          categoryType: category?.type ?? null,
+          transactionType: rule.type,
+        },
+      });
+      await prisma.recurringTransaction.update({
+        where: { id: rule.id },
+        data: { active: false },
+      });
+      continue;
+    }
+
+    while (active && nextRunAt <= now && guard < 48) {
+      if (rule.endDate && nextRunAt > rule.endDate) {
+        active = false;
+        deactivated += 1;
+        break;
+      }
+
+      const externalRef = `recurring:${rule.id}:${dateOnlyKey(nextRunAt)}`;
+      const existingTransaction = await prisma.transaction.findFirst({
+        where: { userId, externalRef },
+        select: { id: true },
+      });
+
+      if (!existingTransaction) {
+        const created = await prisma.transaction.create({
+          data: {
+            type: rule.type,
+            value: roundMoney(rule.value),
+            description: rule.description ?? null,
+            date: new Date(nextRunAt),
+            userId,
+            accountId: rule.accountId,
+            categoryId: rule.categoryId,
+            externalRef,
+            isRecurringGenerated: true,
+            recurringTransactionId: rule.id,
+          },
+        });
+
+        generated += 1;
+        lastRunAt = new Date(nextRunAt);
+        await writeAuditLog(prisma, {
+          userId,
+          transactionId: created.id,
+          entityType: "transaction",
+          entityId: created.id,
+          action: "created_by_recurring_rule",
+          afterData: {
+            type: created.type,
+            value: created.value,
+            date: created.date,
+            description: created.description,
+          },
+          metadata: {
+            recurringTransactionId: rule.id,
+          },
+        });
+      }
+
+      if (remainingInstallments !== null) {
+        remainingInstallments -= 1;
+        if (remainingInstallments <= 0) {
+          remainingInstallments = 0;
+          active = false;
+          deactivated += 1;
+          break;
+        }
+      }
+
+      const candidate = nextDateByFrequency(
+        nextRunAt,
+        rule.frequency,
+        rule.interval,
+        rule.dayOfMonth,
+        rule.dayOfWeek,
+      );
+
+      if (!candidate) {
+        active = false;
+        deactivated += 1;
+        break;
+      }
+
+      nextRunAt = candidate;
+      if (rule.endDate && nextRunAt > rule.endDate) {
+        active = false;
+        deactivated += 1;
+      }
+
+      guard += 1;
+    }
+
+    await prisma.recurringTransaction.update({
+      where: { id: rule.id },
+      data: {
+        nextRunAt,
+        lastRunAt,
+        installmentsRemaining: remainingInstallments,
+        active,
+      },
+    });
+  }
+
+  return { processed, generated, deactivated };
+}
+
+async function processRecurringTransfers(userId) {
+  const now = new Date();
+  const dueRules = await prisma.recurringTransfer.findMany({
+    where: {
+      userId,
+      active: true,
+      nextRunAt: { lte: now },
+    },
+    orderBy: [{ nextRunAt: "asc" }],
+    take: 100,
+  });
+
+  let processed = 0;
+  let executed = 0;
+  let skipped = 0;
+  let deactivated = 0;
+
+  for (const rule of dueRules) {
+    processed += 1;
+    let nextRunAt = new Date(rule.nextRunAt);
+    let lastRunAt = rule.lastRunAt ? new Date(rule.lastRunAt) : null;
+    let active = true;
+    let guard = 0;
+
+    while (active && nextRunAt <= now && guard < 48) {
+      if (rule.endDate && nextRunAt > rule.endDate) {
+        active = false;
+        deactivated += 1;
+        break;
+      }
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          const [fromAccount, toAccount] = await Promise.all([
+            tx.account.findFirst({
+              where: { id: rule.fromAccountId, userId },
+            }),
+            tx.account.findFirst({
+              where: { id: rule.toAccountId, userId },
+            }),
+          ]);
+
+          if (!fromAccount || !toAccount) {
+            throw requestError(404, "Conta de origem ou destino nao encontrada.");
+          }
+
+          if (Number(fromAccount.balance) < Number(rule.amount)) {
+            throw requestError(409, "Saldo insuficiente para transferencia recorrente.");
+          }
+
+          await Promise.all([
+            tx.account.update({
+              where: { id: rule.fromAccountId },
+              data: { balance: { decrement: Number(rule.amount) } },
+            }),
+            tx.account.update({
+              where: { id: rule.toAccountId },
+              data: { balance: { increment: Number(rule.amount) } },
+            }),
+          ]);
+        });
+
+        executed += 1;
+        lastRunAt = new Date(nextRunAt);
+        await writeAuditLog(prisma, {
+          userId,
+          entityType: "recurringTransfer",
+          entityId: rule.id,
+          action: "executed",
+          metadata: {
+            amount: roundMoney(rule.amount),
+            fromAccountId: rule.fromAccountId,
+            toAccountId: rule.toAccountId,
+            runAt: nextRunAt,
+          },
+        });
+      } catch (err) {
+        skipped += 1;
+        await writeAuditLog(prisma, {
+          userId,
+          entityType: "recurringTransfer",
+          entityId: rule.id,
+          action: "skipped",
+          metadata: {
+            amount: roundMoney(rule.amount),
+            fromAccountId: rule.fromAccountId,
+            toAccountId: rule.toAccountId,
+            runAt: nextRunAt,
+            reason: err?.message || String(err),
+          },
+        });
+      }
+
+      const candidate = nextDateByFrequency(nextRunAt, rule.frequency, rule.interval);
+      if (!candidate) {
+        active = false;
+        deactivated += 1;
+        break;
+      }
+
+      nextRunAt = candidate;
+      if (rule.endDate && nextRunAt > rule.endDate) {
+        active = false;
+        deactivated += 1;
+      }
+
+      guard += 1;
+    }
+
+    await prisma.recurringTransfer.update({
+      where: { id: rule.id },
+      data: {
+        nextRunAt,
+        lastRunAt,
+        active,
+      },
+    });
+  }
+
+  return { processed, executed, skipped, deactivated };
+}
+
+async function importBankEntries({ userId, sourceType, fileName = null, entries }) {
+  const normalizedEntries = entries.slice(0, MAX_IMPORT_ROWS);
+  const batch = await prisma.bankImportBatch.create({
+    data: {
+      userId,
+      sourceType,
+      fileName: fileName ? String(fileName).slice(0, 180) : null,
+      totalRows: normalizedEntries.length,
+    },
+  });
+
+  let createdRows = 0;
+  let possibleDuplicates = 0;
+  const localFingerprints = new Set();
+
+  for (const entry of normalizedEntries) {
+    const fingerprint = buildEntryFingerprint(entry.date, entry.amount, entry.description);
+    const duplicateInFile = localFingerprints.has(fingerprint);
+    if (!duplicateInFile) localFingerprints.add(fingerprint);
+
+    const type = transactionTypeFromAmount(entry.amount);
+    const value = transactionValueFromAmount(entry.amount);
+    const { start, end } = dayRange(entry.date);
+
+    const duplicateTransaction = await prisma.transaction.findFirst({
+      where: {
+        userId,
+        type,
+        value: {
+          gte: value - 0.01,
+          lte: value + 0.01,
+        },
+        date: { gte: start, lt: end },
+      },
+      select: { id: true },
+    });
+
+    const possibleDuplicate = duplicateInFile || Boolean(duplicateTransaction);
+    if (possibleDuplicate) possibleDuplicates += 1;
+
+    await prisma.bankStatementEntry.create({
+      data: {
+        userId,
+        importBatchId: batch.id,
+        sourceType,
+        date: new Date(entry.date),
+        amount: roundMoney(entry.amount),
+        description: String(entry.description ?? "").trim() || null,
+        fitId: entry.fitId ? String(entry.fitId).slice(0, 120) : null,
+        fingerprint,
+        possibleDuplicate,
+      },
+    });
+
+    createdRows += 1;
+  }
+
+  await writeAuditLog(prisma, {
+    userId,
+    entityType: "bankImport",
+    entityId: batch.id,
+    action: "created",
+    metadata: {
+      sourceType,
+      fileName: fileName || null,
+      rows: createdRows,
+      possibleDuplicates,
+    },
+  });
+
+  return {
+    batchId: batch.id,
+    sourceType,
+    createdRows,
+    possibleDuplicates,
+  };
+}
+
+async function autoReconcileEntries(userId, limit = 200) {
+  const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+  const pendingEntries = await prisma.bankStatementEntry.findMany({
+    where: {
+      userId,
+      status: "pending",
+      matchedTransactionId: null,
+    },
+    orderBy: [{ date: "desc" }],
+    take: safeLimit,
+  });
+
+  let reconciled = 0;
+  const updates = [];
+
+  for (const entry of pendingEntries) {
+    const type = transactionTypeFromAmount(entry.amount);
+    const value = transactionValueFromAmount(entry.amount);
+    const baseDate = new Date(entry.date);
+    const rangeStart = new Date(baseDate);
+    rangeStart.setDate(rangeStart.getDate() - 2);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(baseDate);
+    rangeEnd.setDate(rangeEnd.getDate() + 3);
+    rangeEnd.setHours(0, 0, 0, 0);
+
+    const candidates = await prisma.transaction.findMany({
+      where: {
+        userId,
+        type,
+        value: { gte: value - 0.01, lte: value + 0.01 },
+        date: { gte: rangeStart, lt: rangeEnd },
+        reconciledEntries: {
+          none: { status: "reconciled" },
+        },
+      },
+      orderBy: [{ date: "asc" }],
+      take: 20,
+    });
+
+    let chosen = null;
+    let bestScore = -1;
+    for (const candidate of candidates) {
+      const score = scoreDescriptionMatch(entry.description, candidate.description);
+      if (score > bestScore) {
+        bestScore = score;
+        chosen = candidate;
+      }
+    }
+
+    if (!chosen) continue;
+    if (bestScore < 0.25 && normalizeText(entry.description)) continue;
+
+    const updated = await prisma.bankStatementEntry.update({
+      where: { id: entry.id },
+      data: {
+        matchedTransactionId: chosen.id,
+        matchedAt: new Date(),
+        status: "reconciled",
+      },
+      include: {
+        matchedTransaction: true,
+      },
+    });
+
+    updates.push(updated);
+    reconciled += 1;
+  }
+
+  if (reconciled > 0) {
+    await writeAuditLog(prisma, {
+      userId,
+      entityType: "reconciliation",
+      entityId: "auto",
+      action: "auto_reconciled",
+      metadata: { reconciled, limit: safeLimit },
+    });
+  }
+
+  return {
+    checked: pendingEntries.length,
+    reconciled,
+    updatedEntries: updates,
+  };
+}
+
+function toRecurringTransactionPayload(rule) {
+  return {
+    id: rule.id,
+    userId: rule.userId,
+    accountId: rule.accountId,
+    categoryId: rule.categoryId,
+    type: rule.type,
+    value: roundMoney(rule.value),
+    description: rule.description,
+    frequency: rule.frequency,
+    interval: rule.interval,
+    dayOfMonth: rule.dayOfMonth,
+    dayOfWeek: rule.dayOfWeek,
+    startDate: rule.startDate,
+    endDate: rule.endDate,
+    nextRunAt: rule.nextRunAt,
+    lastRunAt: rule.lastRunAt,
+    installmentsTotal: rule.installmentsTotal,
+    installmentsRemaining: rule.installmentsRemaining,
+    active: rule.active,
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+    accountName: rule.account?.name || null,
+    categoryName: rule.category?.name || null,
+  };
+}
+
+function toRecurringTransferPayload(rule) {
+  return {
+    id: rule.id,
+    userId: rule.userId,
+    fromAccountId: rule.fromAccountId,
+    toAccountId: rule.toAccountId,
+    amount: roundMoney(rule.amount),
+    description: rule.description,
+    frequency: rule.frequency,
+    interval: rule.interval,
+    startDate: rule.startDate,
+    endDate: rule.endDate,
+    nextRunAt: rule.nextRunAt,
+    lastRunAt: rule.lastRunAt,
+    active: rule.active,
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+    fromAccountName: rule.fromAccount?.name || null,
+    toAccountName: rule.toAccount?.name || null,
+  };
+}
+
+function detectTransactionDuplicates(transactions) {
+  const groups = new Map();
+  for (const transaction of transactions) {
+    const key = [
+      transaction.type,
+      Number(transaction.value).toFixed(2),
+      dateOnlyKey(transaction.date),
+      transaction.accountId,
+      normalizeText(transaction.description).slice(0, 80),
+    ].join("|");
+
+    const current = groups.get(key) ?? [];
+    current.push(transaction);
+    groups.set(key, current);
+  }
+
+  return [...groups.entries()]
+    .filter(([, items]) => items.length > 1)
+    .map(([groupKey, items]) => ({
+      key: groupKey,
+      count: items.length,
+      transactionIds: items.map((item) => item.id),
+      amount: roundMoney(items[0]?.value || 0),
+      type: items[0]?.type || "expense",
+      date: items[0]?.date || null,
+      description: items[0]?.description || null,
+      items: items.map((item) => ({
+        id: item.id,
+        type: item.type,
+        value: roundMoney(item.value),
+        date: item.date,
+        description: item.description,
+        accountId: item.accountId,
+        categoryId: item.categoryId,
+      })),
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
 // Perfil
 app.get("/me", auth, async (req, res) => {
   try {
@@ -935,7 +2005,15 @@ app.delete("/me", auth, async (req, res) => {
     }
 
     await prisma.$transaction(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { userId: req.userId } });
+      await tx.bankStatementEntry.deleteMany({ where: { userId: req.userId } });
+      await tx.bankImportBatch.deleteMany({ where: { userId: req.userId } });
+      await tx.transactionAttachment.deleteMany({ where: { userId: req.userId } });
+      await tx.transactionTag.deleteMany({ where: { userId: req.userId } });
       await tx.transaction.deleteMany({ where: { userId: req.userId } });
+      await tx.recurringTransaction.deleteMany({ where: { userId: req.userId } });
+      await tx.recurringTransfer.deleteMany({ where: { userId: req.userId } });
+      await tx.tag.deleteMany({ where: { userId: req.userId } });
       await tx.goal.deleteMany({ where: { userId: req.userId } });
       await tx.categoryBudget.deleteMany({ where: { userId: req.userId } });
       await tx.accountLimit.deleteMany({ where: { userId: req.userId } });
@@ -2083,6 +3161,1466 @@ app.post("/credit-cards/:id/installments", auth, async (req, res) => {
   }
 });
 
+// Tags
+app.get("/tags", auth, async (req, res) => {
+  try {
+    const tags = await prisma.tag.findMany({
+      where: { userId: req.userId },
+      orderBy: [{ name: "asc" }],
+    });
+    return res.json(tags.map((tag) => toTagPayload(tag)));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao listar tags.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/tags", auth, async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? "").trim();
+    const color = String(req.body?.color ?? "#64748b").trim() || "#64748b";
+    if (!name) return res.status(400).json({ error: "name e obrigatorio." });
+
+    const created = await prisma.tag.create({
+      data: {
+        userId: req.userId,
+        name: name.slice(0, 40),
+        color: color.slice(0, 20),
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "tag",
+      entityId: created.id,
+      action: "created",
+      afterData: toTagPayload(created),
+    });
+
+    return res.status(201).json(toTagPayload(created));
+  } catch (err) {
+    if (err?.code === "P2002") {
+      return res.status(409).json({ error: "Ja existe uma tag com esse nome." });
+    }
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao criar tag.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/tags/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.tag.findFirst({
+      where: { id, userId: req.userId },
+    });
+    if (!existing) return res.status(404).json({ error: "Tag nao encontrada." });
+
+    const name = String(req.body?.name ?? existing.name).trim();
+    const color = String(req.body?.color ?? existing.color).trim() || existing.color;
+    if (!name) return res.status(400).json({ error: "name e obrigatorio." });
+
+    const updated = await prisma.tag.update({
+      where: { id },
+      data: {
+        name: name.slice(0, 40),
+        color: color.slice(0, 20),
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "tag",
+      entityId: updated.id,
+      action: "updated",
+      beforeData: toTagPayload(existing),
+      afterData: toTagPayload(updated),
+    });
+
+    return res.json(toTagPayload(updated));
+  } catch (err) {
+    if (err?.code === "P2002") {
+      return res.status(409).json({ error: "Ja existe uma tag com esse nome." });
+    }
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar tag.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/tags/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.tag.findFirst({
+      where: { id, userId: req.userId },
+    });
+    if (!existing) return res.status(404).json({ error: "Tag nao encontrada." });
+
+    await prisma.transactionTag.deleteMany({
+      where: { userId: req.userId, tagId: id },
+    });
+    await prisma.tag.delete({ where: { id } });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "tag",
+      entityId: id,
+      action: "deleted",
+      beforeData: toTagPayload(existing),
+    });
+
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir tag.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/transactions/:id/tags", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.transaction.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true, type: true, value: true, description: true, date: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Transacao nao encontrada." });
+
+    const tagNames = parseTagNames(req.body?.tags);
+    await prisma.$transaction(async (tx) => {
+      await replaceTransactionTags(tx, req.userId, id, tagNames);
+    });
+
+    const loaded = await loadTransactionOrFail(req.userId, id);
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId: id,
+      entityType: "transaction",
+      entityId: id,
+      action: "tags_updated",
+      beforeData: existing,
+      afterData: {
+        tags: loaded.tags,
+      },
+    });
+
+    return res.json(toTransactionPayload(loaded));
+  } catch (err) {
+    if (err?.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar tags da transacao.",
+      details: String(err),
+    });
+  }
+});
+
+// Anexos de comprovante
+app.post("/transactions/:id/attachments", auth, async (req, res) => {
+  try {
+    const transactionId = parseId(req.params.id);
+    if (!transactionId) return res.status(400).json({ error: "id invalido." });
+
+    const transaction = await prisma.transaction.findFirst({
+      where: { id: transactionId, userId: req.userId },
+      select: { id: true },
+    });
+    if (!transaction) {
+      return res.status(404).json({ error: "Transacao nao encontrada." });
+    }
+
+    const attachment = parseAttachmentPayload(req.body);
+    if (!attachment) {
+      return res.status(400).json({
+        error: `Anexo invalido. Tamanho maximo: ${Math.round(MAX_ATTACHMENT_BYTES / 1024 / 1024)}MB.`,
+      });
+    }
+
+    const created = await prisma.transactionAttachment.create({
+      data: {
+        transactionId,
+        userId: req.userId,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        contentBase64: attachment.contentBase64,
+      },
+      select: {
+        id: true,
+        transactionId: true,
+        fileName: true,
+        mimeType: true,
+        sizeBytes: true,
+        createdAt: true,
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId,
+      entityType: "transactionAttachment",
+      entityId: created.id,
+      action: "created",
+      afterData: created,
+    });
+
+    return res.status(201).json(created);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao anexar comprovante.",
+      details: String(err),
+    });
+  }
+});
+
+app.get("/transactions/:id/attachments/:attachmentId", auth, async (req, res) => {
+  try {
+    const transactionId = parseId(req.params.id);
+    const attachmentId = parseId(req.params.attachmentId);
+    if (!transactionId || !attachmentId) {
+      return res.status(400).json({ error: "id invalido." });
+    }
+
+    const attachment = await prisma.transactionAttachment.findFirst({
+      where: {
+        id: attachmentId,
+        transactionId,
+        userId: req.userId,
+      },
+      select: {
+        id: true,
+        transactionId: true,
+        fileName: true,
+        mimeType: true,
+        sizeBytes: true,
+        contentBase64: true,
+        createdAt: true,
+      },
+    });
+
+    if (!attachment) {
+      return res.status(404).json({ error: "Anexo nao encontrado." });
+    }
+
+    return res.json(attachment);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar anexo.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/transactions/:id/attachments/:attachmentId", auth, async (req, res) => {
+  try {
+    const transactionId = parseId(req.params.id);
+    const attachmentId = parseId(req.params.attachmentId);
+    if (!transactionId || !attachmentId) {
+      return res.status(400).json({ error: "id invalido." });
+    }
+
+    const attachment = await prisma.transactionAttachment.findFirst({
+      where: {
+        id: attachmentId,
+        transactionId,
+        userId: req.userId,
+      },
+    });
+    if (!attachment) {
+      return res.status(404).json({ error: "Anexo nao encontrado." });
+    }
+
+    await prisma.transactionAttachment.delete({ where: { id: attachmentId } });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId,
+      entityType: "transactionAttachment",
+      entityId: attachmentId,
+      action: "deleted",
+      beforeData: {
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      },
+    });
+
+    return res.json({ ok: true, id: attachmentId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao remover anexo.",
+      details: String(err),
+    });
+  }
+});
+
+// Transacoes recorrentes automaticas
+app.get("/transactions/recurring", auth, async (req, res) => {
+  try {
+    const rules = await prisma.recurringTransaction.findMany({
+      where: { userId: req.userId },
+      include: {
+        account: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+      },
+      orderBy: [{ active: "desc" }, { nextRunAt: "asc" }],
+    });
+    return res.json(rules.map((rule) => toRecurringTransactionPayload(rule)));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao listar recorrencias de transacao.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/transactions/recurring", auth, async (req, res) => {
+  try {
+    const type = String(req.body?.type ?? "expense");
+    if (!isTransactionType(type)) {
+      return res.status(400).json({ error: "type deve ser income ou expense." });
+    }
+
+    const value = parsePositiveAmount(req.body?.value);
+    if (!value) return res.status(400).json({ error: "value deve ser positivo." });
+
+    const accountId = parseId(req.body?.accountId);
+    const categoryId = parseId(req.body?.categoryId);
+    if (!accountId || !categoryId) {
+      return res.status(400).json({ error: "accountId e categoryId sao obrigatorios." });
+    }
+
+    const [account, category] = await Promise.all([
+      prisma.account.findFirst({ where: { id: accountId, userId: req.userId } }),
+      prisma.category.findFirst({ where: { id: categoryId, userId: req.userId } }),
+    ]);
+    if (!account || !category) {
+      return res.status(404).json({ error: "Conta ou categoria nao encontrada." });
+    }
+    if (String(category.type) !== type) {
+      return res.status(400).json({
+        error: "Tipo da categoria deve combinar com tipo da transacao.",
+      });
+    }
+
+    const rawFrequency = normalizeText(req.body?.frequency || "monthly");
+    if (!RECURRING_FREQUENCIES.has(rawFrequency)) {
+      return res.status(400).json({ error: "frequency invalida." });
+    }
+    const frequency = parseRecurringFrequency(rawFrequency, "monthly");
+    const interval = parsePositiveInt(req.body?.interval, 1, 1, 120);
+    const startDate = parseIsoDate(req.body?.startDate, new Date());
+    const endDate = parseIsoDate(req.body?.endDate, null);
+    if (endDate && startDate > endDate) {
+      return res.status(400).json({ error: "endDate deve ser maior que startDate." });
+    }
+
+    const dayOfMonth =
+      frequency === "monthly" || frequency === "yearly"
+        ? parseDayOfMonth(req.body?.dayOfMonth, startDate.getDate())
+        : null;
+    const dayOfWeek = frequency === "weekly" ? parseDayOfWeek(req.body?.dayOfWeek, null) : null;
+    const description = String(req.body?.description ?? "").trim() || null;
+
+    const installmentsTotal =
+      req.body?.installmentsTotal === undefined || req.body?.installmentsTotal === null
+        ? null
+        : parsePositiveInt(req.body?.installmentsTotal, null, 1, 360);
+    const installmentsRemaining =
+      installmentsTotal === null
+        ? null
+        : parsePositiveInt(req.body?.installmentsRemaining, installmentsTotal, 0, 360);
+    if (
+      req.body?.installmentsTotal !== undefined &&
+      req.body?.installmentsTotal !== null &&
+      !installmentsTotal
+    ) {
+      return res.status(400).json({ error: "installmentsTotal invalido." });
+    }
+
+    let nextRunAt = alignDateForRule(startDate, frequency, dayOfMonth, dayOfWeek);
+    const now = new Date();
+    let guard = 0;
+    while (nextRunAt < now && guard < 120) {
+      const next = nextDateByFrequency(nextRunAt, frequency, interval, dayOfMonth, dayOfWeek);
+      if (!next) break;
+      nextRunAt = next;
+      guard += 1;
+    }
+
+    const created = await prisma.recurringTransaction.create({
+      data: {
+        userId: req.userId,
+        accountId,
+        categoryId,
+        type,
+        value: roundMoney(value),
+        description,
+        frequency,
+        interval,
+        dayOfMonth,
+        dayOfWeek,
+        startDate,
+        endDate,
+        nextRunAt,
+        installmentsTotal,
+        installmentsRemaining,
+        active: true,
+      },
+      include: {
+        account: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "recurringTransaction",
+      entityId: created.id,
+      action: "created",
+      afterData: toRecurringTransactionPayload(created),
+    });
+
+    return res.status(201).json(toRecurringTransactionPayload(created));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao criar transacao recorrente.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/transactions/recurring/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.recurringTransaction.findFirst({
+      where: { id, userId: req.userId },
+      include: {
+        account: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+      },
+    });
+    if (!existing) return res.status(404).json({ error: "Recorrencia nao encontrada." });
+
+    const type = req.body?.type ? String(req.body.type) : existing.type;
+    if (!isTransactionType(type)) {
+      return res.status(400).json({ error: "type deve ser income ou expense." });
+    }
+
+    const value =
+      req.body?.value === undefined || req.body?.value === null
+        ? existing.value
+        : parsePositiveAmount(req.body?.value);
+    if (!value) return res.status(400).json({ error: "value deve ser positivo." });
+
+    const accountId =
+      req.body?.accountId === undefined || req.body?.accountId === null
+        ? existing.accountId
+        : parseId(req.body?.accountId);
+    const categoryId =
+      req.body?.categoryId === undefined || req.body?.categoryId === null
+        ? existing.categoryId
+        : parseId(req.body?.categoryId);
+    if (!accountId || !categoryId) {
+      return res.status(400).json({ error: "accountId e categoryId sao obrigatorios." });
+    }
+
+    const [account, category] = await Promise.all([
+      prisma.account.findFirst({ where: { id: accountId, userId: req.userId } }),
+      prisma.category.findFirst({ where: { id: categoryId, userId: req.userId } }),
+    ]);
+    if (!account || !category) {
+      return res.status(404).json({ error: "Conta ou categoria nao encontrada." });
+    }
+    if (String(category.type) !== type) {
+      return res.status(400).json({
+        error: "Tipo da categoria deve combinar com tipo da transacao.",
+      });
+    }
+
+    const frequency = req.body?.frequency
+      ? parseRecurringFrequency(req.body?.frequency, "")
+      : existing.frequency;
+    if (!RECURRING_FREQUENCIES.has(frequency)) {
+      return res.status(400).json({ error: "frequency invalida." });
+    }
+    const interval =
+      req.body?.interval === undefined || req.body?.interval === null
+        ? existing.interval
+        : parsePositiveInt(req.body?.interval, null, 1, 120);
+    if (!interval) return res.status(400).json({ error: "interval invalido." });
+
+    const startDate = parseIsoDate(req.body?.startDate, existing.startDate);
+    const endDate = parseIsoDate(req.body?.endDate, existing.endDate);
+    if (endDate && startDate > endDate) {
+      return res.status(400).json({ error: "endDate deve ser maior que startDate." });
+    }
+
+    const dayOfMonth =
+      frequency === "monthly" || frequency === "yearly"
+        ? parseDayOfMonth(req.body?.dayOfMonth, existing.dayOfMonth ?? startDate.getDate())
+        : null;
+    const dayOfWeek =
+      frequency === "weekly"
+        ? parseDayOfWeek(req.body?.dayOfWeek, existing.dayOfWeek)
+        : null;
+    const active =
+      req.body?.active === undefined || req.body?.active === null
+        ? existing.active
+        : Boolean(req.body?.active);
+    const description =
+      req.body?.description === undefined
+        ? existing.description
+        : String(req.body?.description ?? "").trim() || null;
+    const installmentsTotal =
+      req.body?.installmentsTotal === undefined
+        ? existing.installmentsTotal
+        : parsePositiveInt(req.body?.installmentsTotal, null, 1, 360);
+    const installmentsRemaining =
+      req.body?.installmentsRemaining === undefined
+        ? existing.installmentsRemaining
+        : parsePositiveInt(
+            req.body?.installmentsRemaining,
+            installmentsTotal ?? existing.installmentsRemaining ?? 0,
+            0,
+            360,
+          );
+    if (
+      req.body?.installmentsTotal !== undefined &&
+      req.body?.installmentsTotal !== null &&
+      !installmentsTotal
+    ) {
+      return res.status(400).json({ error: "installmentsTotal invalido." });
+    }
+
+    let nextRunAt = parseIsoDate(req.body?.nextRunAt, null);
+    if (!nextRunAt) {
+      nextRunAt = alignDateForRule(startDate, frequency, dayOfMonth, dayOfWeek);
+      const now = new Date();
+      let guard = 0;
+      while (nextRunAt < now && guard < 120) {
+        const next = nextDateByFrequency(nextRunAt, frequency, interval, dayOfMonth, dayOfWeek);
+        if (!next) break;
+        nextRunAt = next;
+        guard += 1;
+      }
+    }
+
+    const updated = await prisma.recurringTransaction.update({
+      where: { id },
+      data: {
+        accountId,
+        categoryId,
+        type,
+        value: roundMoney(value),
+        description,
+        frequency,
+        interval,
+        dayOfMonth,
+        dayOfWeek,
+        startDate,
+        endDate,
+        nextRunAt,
+        installmentsTotal,
+        installmentsRemaining,
+        active,
+      },
+      include: {
+        account: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "recurringTransaction",
+      entityId: id,
+      action: "updated",
+      beforeData: toRecurringTransactionPayload(existing),
+      afterData: toRecurringTransactionPayload(updated),
+    });
+
+    return res.json(toRecurringTransactionPayload(updated));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar transacao recorrente.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/transactions/recurring/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.recurringTransaction.findFirst({
+      where: { id, userId: req.userId },
+    });
+    if (!existing) return res.status(404).json({ error: "Recorrencia nao encontrada." });
+
+    await prisma.recurringTransaction.delete({ where: { id } });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "recurringTransaction",
+      entityId: id,
+      action: "deleted",
+      beforeData: {
+        type: existing.type,
+        value: existing.value,
+        frequency: existing.frequency,
+      },
+    });
+
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir recorrencia.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/transactions/recurring/run", auth, async (req, res) => {
+  try {
+    const recurringSummary = await processRecurringTransactions(req.userId);
+    return res.json({ ok: true, recurringSummary });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao executar recorrencias.",
+      details: String(err),
+    });
+  }
+});
+
+// Parcelamento automatico de transacoes com geracao de parcelas futuras
+app.post("/transactions/installments", auth, async (req, res) => {
+  try {
+    const type = String(req.body?.type ?? "expense");
+    if (!isTransactionType(type)) {
+      return res.status(400).json({ error: "type deve ser income ou expense." });
+    }
+
+    const totalAmount = parsePositiveAmount(req.body?.totalAmount);
+    if (!totalAmount) {
+      return res.status(400).json({ error: "totalAmount deve ser positivo." });
+    }
+
+    const installments = parsePositiveInt(req.body?.installments, null, 2, 120);
+    if (!installments) {
+      return res.status(400).json({ error: "installments deve estar entre 2 e 120." });
+    }
+
+    const accountId = parseId(req.body?.accountId);
+    const categoryId = parseId(req.body?.categoryId);
+    if (!accountId || !categoryId) {
+      return res.status(400).json({ error: "accountId e categoryId sao obrigatorios." });
+    }
+
+    const [account, category] = await Promise.all([
+      prisma.account.findFirst({ where: { id: accountId, userId: req.userId } }),
+      prisma.category.findFirst({ where: { id: categoryId, userId: req.userId } }),
+    ]);
+    if (!account || !category) {
+      return res.status(404).json({ error: "Conta ou categoria nao encontrada." });
+    }
+    if (String(category.type) !== type) {
+      return res.status(400).json({
+        error: "Tipo da categoria deve combinar com tipo da transacao.",
+      });
+    }
+
+    const startDate = parseIsoDate(req.body?.startDate, new Date());
+    const description = String(req.body?.description ?? "").trim();
+    const tagNames = parseTagNames(req.body?.tags);
+    const values = splitInstallments(totalAmount, installments);
+    const startDay = startDate.getDate();
+    const groupRef = `installments:${req.userId}:${Date.now()}`;
+
+    const created = await prisma.$transaction(async (tx) => {
+      const createdIds = [];
+      for (let index = 0; index < values.length; index += 1) {
+        const installmentDate = shiftDateMonths(startDate, index, startDay);
+        const label = `${index + 1}/${installments}`;
+        const transaction = await tx.transaction.create({
+          data: {
+            userId: req.userId,
+            type,
+            value: roundMoney(values[index]),
+            description: description ? `${description} (${label})` : `Parcela ${label}`,
+            date: installmentDate,
+            accountId,
+            categoryId,
+            externalRef: `${groupRef}:${index + 1}`,
+            isRecurringGenerated: true,
+          },
+          include: TRANSACTION_INCLUDE,
+        });
+
+        if (tagNames.length > 0) {
+          await replaceTransactionTags(tx, req.userId, transaction.id, tagNames);
+        }
+
+        createdIds.push(transaction.id);
+      }
+
+      return tx.transaction.findMany({
+        where: { id: { in: createdIds } },
+        include: TRANSACTION_INCLUDE,
+        orderBy: [{ date: "asc" }, { id: "asc" }],
+      });
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "transactionInstallments",
+      entityId: groupRef,
+      action: "created",
+      metadata: {
+        installments,
+        totalAmount: roundMoney(totalAmount),
+        transactionIds: created.map((item) => item.id),
+        accountId,
+        categoryId,
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      totalAmount: roundMoney(totalAmount),
+      installments,
+      transactions: created.map((item) => toTransactionPayload(item)),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao gerar parcelas automaticas.",
+      details: String(err),
+    });
+  }
+});
+
+// Transferencia automatica recorrente
+app.get("/accounts/transfer-recurring", auth, async (req, res) => {
+  try {
+    const rules = await prisma.recurringTransfer.findMany({
+      where: { userId: req.userId },
+      include: {
+        fromAccount: { select: { id: true, name: true } },
+        toAccount: { select: { id: true, name: true } },
+      },
+      orderBy: [{ active: "desc" }, { nextRunAt: "asc" }],
+    });
+    return res.json(rules.map((rule) => toRecurringTransferPayload(rule)));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao listar transferencias recorrentes.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/accounts/transfer-recurring", auth, async (req, res) => {
+  try {
+    const fromAccountId = parseId(req.body?.fromAccountId);
+    const toAccountId = parseId(req.body?.toAccountId);
+    const amount = parsePositiveAmount(req.body?.amount);
+
+    if (!fromAccountId || !toAccountId) {
+      return res.status(400).json({ error: "fromAccountId e toAccountId sao obrigatorios." });
+    }
+    if (fromAccountId === toAccountId) {
+      return res.status(400).json({ error: "Origem e destino devem ser diferentes." });
+    }
+    if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+
+    const [fromAccount, toAccount] = await Promise.all([
+      prisma.account.findFirst({ where: { id: fromAccountId, userId: req.userId } }),
+      prisma.account.findFirst({ where: { id: toAccountId, userId: req.userId } }),
+    ]);
+    if (!fromAccount || !toAccount) {
+      return res.status(404).json({ error: "Conta de origem ou destino nao encontrada." });
+    }
+
+    const rawFrequency = normalizeText(req.body?.frequency || "monthly");
+    if (!RECURRING_FREQUENCIES.has(rawFrequency)) {
+      return res.status(400).json({ error: "frequency invalida." });
+    }
+    const frequency = parseRecurringFrequency(rawFrequency, "monthly");
+    const interval = parsePositiveInt(req.body?.interval, 1, 1, 120);
+    const startDate = parseIsoDate(req.body?.startDate, new Date());
+    const endDate = parseIsoDate(req.body?.endDate, null);
+    if (endDate && startDate > endDate) {
+      return res.status(400).json({ error: "endDate deve ser maior que startDate." });
+    }
+
+    let nextRunAt = new Date(startDate);
+    const now = new Date();
+    let guard = 0;
+    while (nextRunAt < now && guard < 120) {
+      const next = nextDateByFrequency(nextRunAt, frequency, interval);
+      if (!next) break;
+      nextRunAt = next;
+      guard += 1;
+    }
+
+    const created = await prisma.recurringTransfer.create({
+      data: {
+        userId: req.userId,
+        fromAccountId,
+        toAccountId,
+        amount: roundMoney(amount),
+        description: String(req.body?.description ?? "").trim() || null,
+        frequency,
+        interval,
+        startDate,
+        endDate,
+        nextRunAt,
+        active: true,
+      },
+      include: {
+        fromAccount: { select: { id: true, name: true } },
+        toAccount: { select: { id: true, name: true } },
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "recurringTransfer",
+      entityId: created.id,
+      action: "created",
+      afterData: toRecurringTransferPayload(created),
+    });
+
+    return res.status(201).json(toRecurringTransferPayload(created));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao criar transferencia recorrente.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/accounts/transfer-recurring/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.recurringTransfer.findFirst({
+      where: { id, userId: req.userId },
+      include: {
+        fromAccount: { select: { id: true, name: true } },
+        toAccount: { select: { id: true, name: true } },
+      },
+    });
+    if (!existing) return res.status(404).json({ error: "Regra nao encontrada." });
+
+    const fromAccountId =
+      req.body?.fromAccountId === undefined || req.body?.fromAccountId === null
+        ? existing.fromAccountId
+        : parseId(req.body?.fromAccountId);
+    const toAccountId =
+      req.body?.toAccountId === undefined || req.body?.toAccountId === null
+        ? existing.toAccountId
+        : parseId(req.body?.toAccountId);
+    const amount =
+      req.body?.amount === undefined || req.body?.amount === null
+        ? existing.amount
+        : parsePositiveAmount(req.body?.amount);
+
+    if (!fromAccountId || !toAccountId) {
+      return res.status(400).json({ error: "fromAccountId e toAccountId sao obrigatorios." });
+    }
+    if (fromAccountId === toAccountId) {
+      return res.status(400).json({ error: "Origem e destino devem ser diferentes." });
+    }
+    if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+
+    const [fromAccount, toAccount] = await Promise.all([
+      prisma.account.findFirst({ where: { id: fromAccountId, userId: req.userId } }),
+      prisma.account.findFirst({ where: { id: toAccountId, userId: req.userId } }),
+    ]);
+    if (!fromAccount || !toAccount) {
+      return res.status(404).json({ error: "Conta de origem ou destino nao encontrada." });
+    }
+
+    const frequency = req.body?.frequency
+      ? parseRecurringFrequency(req.body?.frequency, "")
+      : existing.frequency;
+    if (!RECURRING_FREQUENCIES.has(frequency)) {
+      return res.status(400).json({ error: "frequency invalida." });
+    }
+    const interval =
+      req.body?.interval === undefined || req.body?.interval === null
+        ? existing.interval
+        : parsePositiveInt(req.body?.interval, null, 1, 120);
+    if (!interval) return res.status(400).json({ error: "interval invalido." });
+
+    const startDate = parseIsoDate(req.body?.startDate, existing.startDate);
+    const endDate = parseIsoDate(req.body?.endDate, existing.endDate);
+    if (endDate && startDate > endDate) {
+      return res.status(400).json({ error: "endDate deve ser maior que startDate." });
+    }
+
+    const active =
+      req.body?.active === undefined || req.body?.active === null
+        ? existing.active
+        : Boolean(req.body?.active);
+    const description =
+      req.body?.description === undefined
+        ? existing.description
+        : String(req.body?.description ?? "").trim() || null;
+
+    let nextRunAt = parseIsoDate(req.body?.nextRunAt, null);
+    if (!nextRunAt) {
+      nextRunAt = new Date(startDate);
+      const now = new Date();
+      let guard = 0;
+      while (nextRunAt < now && guard < 120) {
+        const next = nextDateByFrequency(nextRunAt, frequency, interval);
+        if (!next) break;
+        nextRunAt = next;
+        guard += 1;
+      }
+    }
+
+    const updated = await prisma.recurringTransfer.update({
+      where: { id },
+      data: {
+        fromAccountId,
+        toAccountId,
+        amount: roundMoney(amount),
+        description,
+        frequency,
+        interval,
+        startDate,
+        endDate,
+        nextRunAt,
+        active,
+      },
+      include: {
+        fromAccount: { select: { id: true, name: true } },
+        toAccount: { select: { id: true, name: true } },
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "recurringTransfer",
+      entityId: id,
+      action: "updated",
+      beforeData: toRecurringTransferPayload(existing),
+      afterData: toRecurringTransferPayload(updated),
+    });
+
+    return res.json(toRecurringTransferPayload(updated));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar transferencia recorrente.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/accounts/transfer-recurring/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.recurringTransfer.findFirst({
+      where: { id, userId: req.userId },
+      include: {
+        fromAccount: { select: { id: true, name: true } },
+        toAccount: { select: { id: true, name: true } },
+      },
+    });
+    if (!existing) return res.status(404).json({ error: "Regra nao encontrada." });
+
+    await prisma.recurringTransfer.delete({ where: { id } });
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "recurringTransfer",
+      entityId: id,
+      action: "deleted",
+      beforeData: toRecurringTransferPayload(existing),
+    });
+
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir transferencia recorrente.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/accounts/transfer-recurring/run", auth, async (req, res) => {
+  try {
+    const summary = await processRecurringTransfers(req.userId);
+    return res.json({ ok: true, summary });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao executar transferencias recorrentes.",
+      details: String(err),
+    });
+  }
+});
+
+// Importacao CSV / OFX
+app.post("/imports/csv", auth, async (req, res) => {
+  try {
+    const content = String(req.body?.content ?? "");
+    const fileName = String(req.body?.fileName ?? "import.csv");
+    if (!content.trim()) {
+      return res.status(400).json({ error: "Arquivo CSV vazio." });
+    }
+
+    const entries = parseCsvEntries(content);
+    if (entries.length === 0) {
+      return res.status(400).json({
+        error: "Nao foi possivel extrair lancamentos do CSV.",
+      });
+    }
+
+    const imported = await importBankEntries({
+      userId: req.userId,
+      sourceType: "csv",
+      fileName,
+      entries,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      ...imported,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao importar CSV.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/imports/ofx", auth, async (req, res) => {
+  try {
+    const content = String(req.body?.content ?? "");
+    const fileName = String(req.body?.fileName ?? "import.ofx");
+    if (!content.trim()) {
+      return res.status(400).json({ error: "Arquivo OFX vazio." });
+    }
+
+    const entries = parseOfxEntries(content);
+    if (entries.length === 0) {
+      return res.status(400).json({
+        error: "Nao foi possivel extrair lancamentos do OFX.",
+      });
+    }
+
+    const imported = await importBankEntries({
+      userId: req.userId,
+      sourceType: "ofx",
+      fileName,
+      entries,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      ...imported,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao importar OFX.",
+      details: String(err),
+    });
+  }
+});
+
+// Conciliacao bancaria
+app.get("/reconciliation/entries", auth, async (req, res) => {
+  try {
+    const status = String(req.query?.status ?? "").trim().toLowerCase();
+    const limit = parsePositiveInt(req.query?.limit, 200, 1, 1000);
+    const where = { userId: req.userId };
+    if (RECONCILIATION_STATUSES.has(status)) {
+      where.status = status;
+    }
+
+    const entries = await prisma.bankStatementEntry.findMany({
+      where,
+      include: {
+        importBatch: {
+          select: { id: true, sourceType: true, fileName: true, createdAt: true },
+        },
+        matchedTransaction: {
+          select: {
+            id: true,
+            type: true,
+            value: true,
+            description: true,
+            date: true,
+            accountId: true,
+            categoryId: true,
+          },
+        },
+      },
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+      take: limit,
+    });
+
+    return res.json(entries);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao listar conciliacao bancaria.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/reconciliation/auto", auth, async (req, res) => {
+  try {
+    const limit = parsePositiveInt(req.body?.limit ?? req.query?.limit, 200, 1, 1000);
+    const summary = await autoReconcileEntries(req.userId, limit);
+    return res.json({
+      ok: true,
+      ...summary,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha na conciliacao automatica.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/reconciliation/:id/match", auth, async (req, res) => {
+  try {
+    const entryId = parseId(req.params.id);
+    const transactionId = parseId(req.body?.transactionId);
+    if (!entryId || !transactionId) {
+      return res.status(400).json({ error: "entryId e transactionId sao obrigatorios." });
+    }
+
+    const [entry, transaction] = await Promise.all([
+      prisma.bankStatementEntry.findFirst({
+        where: { id: entryId, userId: req.userId },
+      }),
+      prisma.transaction.findFirst({
+        where: { id: transactionId, userId: req.userId },
+      }),
+    ]);
+    if (!entry) return res.status(404).json({ error: "Lancamento importado nao encontrado." });
+    if (!transaction) return res.status(404).json({ error: "Transacao nao encontrada." });
+
+    const updated = await prisma.bankStatementEntry.update({
+      where: { id: entryId },
+      data: {
+        matchedTransactionId: transactionId,
+        matchedAt: new Date(),
+        status: "reconciled",
+      },
+      include: {
+        matchedTransaction: {
+          select: {
+            id: true,
+            type: true,
+            value: true,
+            description: true,
+            date: true,
+          },
+        },
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId,
+      entityType: "reconciliation",
+      entityId: entryId,
+      action: "manual_match",
+      beforeData: {
+        matchedTransactionId: entry.matchedTransactionId,
+        status: entry.status,
+      },
+      afterData: {
+        matchedTransactionId: transactionId,
+        status: "reconciled",
+      },
+    });
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao conciliar manualmente.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/reconciliation/:id/unmatch", auth, async (req, res) => {
+  try {
+    const entryId = parseId(req.params.id);
+    if (!entryId) return res.status(400).json({ error: "id invalido." });
+
+    const entry = await prisma.bankStatementEntry.findFirst({
+      where: { id: entryId, userId: req.userId },
+    });
+    if (!entry) return res.status(404).json({ error: "Lancamento importado nao encontrado." });
+
+    const updated = await prisma.bankStatementEntry.update({
+      where: { id: entryId },
+      data: {
+        matchedTransactionId: null,
+        matchedAt: null,
+        status: "pending",
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "reconciliation",
+      entityId: entryId,
+      action: "unmatched",
+      beforeData: {
+        matchedTransactionId: entry.matchedTransactionId,
+        status: entry.status,
+      },
+      afterData: {
+        matchedTransactionId: null,
+        status: "pending",
+      },
+    });
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao desfazer conciliacao.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/reconciliation/:id/create-transaction", auth, async (req, res) => {
+  try {
+    const entryId = parseId(req.params.id);
+    const accountId = parseId(req.body?.accountId);
+    const categoryId = parseId(req.body?.categoryId);
+    if (!entryId || !accountId || !categoryId) {
+      return res.status(400).json({ error: "entryId, accountId e categoryId sao obrigatorios." });
+    }
+
+    const [entry, account, category] = await Promise.all([
+      prisma.bankStatementEntry.findFirst({
+        where: { id: entryId, userId: req.userId },
+      }),
+      prisma.account.findFirst({
+        where: { id: accountId, userId: req.userId },
+      }),
+      prisma.category.findFirst({
+        where: { id: categoryId, userId: req.userId },
+      }),
+    ]);
+
+    if (!entry) return res.status(404).json({ error: "Lancamento importado nao encontrado." });
+    if (!account || !category) {
+      return res.status(404).json({ error: "Conta ou categoria nao encontrada." });
+    }
+
+    const type = transactionTypeFromAmount(entry.amount);
+    const value = transactionValueFromAmount(entry.amount);
+    if (String(category.type) !== type) {
+      return res.status(400).json({
+        error: "Tipo da categoria deve combinar com o tipo do lancamento importado.",
+      });
+    }
+
+    const externalRef = `bank-entry:${entry.id}`;
+    let transaction = await prisma.transaction.findFirst({
+      where: { userId: req.userId, externalRef },
+      include: TRANSACTION_INCLUDE,
+    });
+
+    if (!transaction) {
+      transaction = await prisma.transaction.create({
+        data: {
+          userId: req.userId,
+          type,
+          value,
+          description: entry.description || null,
+          date: entry.date,
+          accountId,
+          categoryId,
+          externalRef,
+        },
+        include: TRANSACTION_INCLUDE,
+      });
+    }
+
+    const updatedEntry = await prisma.bankStatementEntry.update({
+      where: { id: entry.id },
+      data: {
+        matchedTransactionId: transaction.id,
+        matchedAt: new Date(),
+        status: "reconciled",
+      },
+      include: {
+        matchedTransaction: true,
+      },
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId: transaction.id,
+      entityType: "reconciliation",
+      entityId: entryId,
+      action: "created_transaction_from_entry",
+      afterData: {
+        transactionId: transaction.id,
+        entryId,
+      },
+    });
+
+    return res.status(201).json({
+      entry: updatedEntry,
+      transaction: toTransactionPayload(transaction),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao criar transacao a partir da conciliacao.",
+      details: String(err),
+    });
+  }
+});
+
+// Deteccao de duplicidade
+app.get("/transactions/duplicates", auth, async (req, res) => {
+  try {
+    await processRecurringTransactions(req.userId);
+
+    const days = Number(req.query?.days);
+    const where = { userId: req.userId };
+    if (Number.isInteger(days) && days > 0) {
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      where.date = { gte: since };
+    }
+
+    const transactions = await prisma.transaction.findMany({
+      where,
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+    });
+    const groups = detectTransactionDuplicates(transactions);
+
+    return res.json({
+      groupsCount: groups.length,
+      transactionsCount: transactions.length,
+      groups,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao detectar duplicidades.",
+      details: String(err),
+    });
+  }
+});
+
+// Historico de alteracoes (audit log)
+app.get("/audit-logs", auth, async (req, res) => {
+  try {
+    const limit = parsePositiveInt(req.query?.limit, 100, 1, 1000);
+    const entityType = String(req.query?.entityType ?? "").trim();
+
+    const where = { userId: req.userId };
+    if (entityType) where.entityType = entityType;
+
+    const logs = await prisma.auditLog.findMany({
+      where,
+      include: {
+        transaction: {
+          select: {
+            id: true,
+            type: true,
+            value: true,
+            description: true,
+            date: true,
+          },
+        },
+      },
+      orderBy: [{ createdAt: "desc" }],
+      take: limit,
+    });
+
+    return res.json(logs);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao listar audit log.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/automations/run", auth, async (req, res) => {
+  try {
+    const [recurringTransactions, recurringTransfers] = await Promise.all([
+      processRecurringTransactions(req.userId),
+      processRecurringTransfers(req.userId),
+    ]);
+
+    return res.json({
+      ok: true,
+      recurringTransactions,
+      recurringTransfers,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao executar automacoes.",
+      details: String(err),
+    });
+  }
+});
+
 // Conta
 app.post("/accounts", auth, async (req, res) => {
   try {
@@ -2121,10 +4659,19 @@ app.post("/accounts", auth, async (req, res) => {
 });
 
 app.get("/accounts", auth, async (req, res) => {
-  const accounts = await prisma.account.findMany({
-    where: { userId: req.userId },
-  });
-  res.json(accounts);
+  try {
+    await processRecurringTransfers(req.userId);
+    const accounts = await prisma.account.findMany({
+      where: { userId: req.userId },
+    });
+    res.json(accounts);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Falha ao listar contas.",
+      details: String(err),
+    });
+  }
 });
 
 app.post("/accounts/transfer", auth, async (req, res) => {
@@ -2174,6 +4721,18 @@ app.post("/accounts/transfer", auth, async (req, res) => {
           data: { balance: { increment: amount } },
         }),
       ]);
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      entityType: "accountTransfer",
+      entityId: `${fromAccountId}:${toAccountId}:${Date.now()}`,
+      action: "executed",
+      metadata: {
+        amount: roundMoney(amount),
+        fromAccountId,
+        toAccountId,
+      },
     });
 
     return res.json({
@@ -2263,6 +4822,27 @@ app.delete("/accounts/:id", auth, async (req, res) => {
         error: "Nao foi possivel excluir conta.",
         reason: `A conta possui ${linkedCount} transacao(oes) vinculada(s). Exclua ou recategorize essas transacoes antes.`,
         linkedTransactions: linkedCount,
+      });
+    }
+
+    const [recurringTransactionsCount, recurringTransfersCount] = await Promise.all([
+      prisma.recurringTransaction.count({
+        where: { userId: req.userId, accountId: id },
+      }),
+      prisma.recurringTransfer.count({
+        where: {
+          userId: req.userId,
+          OR: [{ fromAccountId: id }, { toAccountId: id }],
+        },
+      }),
+    ]);
+
+    if (recurringTransactionsCount > 0 || recurringTransfersCount > 0) {
+      return res.status(409).json({
+        error: "Nao foi possivel excluir conta.",
+        reason: "Existem automacoes recorrentes vinculadas a esta conta.",
+        linkedRecurringTransactions: recurringTransactionsCount,
+        linkedRecurringTransfers: recurringTransfersCount,
       });
     }
 
@@ -2395,6 +4975,17 @@ app.delete("/categories/:id", auth, async (req, res) => {
         error: "Nao foi possivel excluir categoria.",
         reason: `A categoria possui ${linkedCount} transacao(oes) vinculada(s). Exclua ou recategorize essas transacoes antes.`,
         linkedTransactions: linkedCount,
+      });
+    }
+
+    const linkedRecurringCount = await prisma.recurringTransaction.count({
+      where: { userId: req.userId, categoryId: id },
+    });
+    if (linkedRecurringCount > 0) {
+      return res.status(409).json({
+        error: "Nao foi possivel excluir categoria.",
+        reason: "Existem transacoes recorrentes vinculadas a esta categoria.",
+        linkedRecurringTransactions: linkedRecurringCount,
       });
     }
 
@@ -2618,12 +5209,10 @@ app.post("/login", async (req, res) => {
 app.post("/transactions", auth, async (req, res) => {
   try {
     const { type, value, description, date, accountId, categoryId } = req.body;
+    const tagNames = parseTagNames(req.body?.tags);
 
-    // Validações mínimas
     if (!isTransactionType(type)) {
-      return res
-        .status(400)
-        .json({ error: "type must be 'income' or 'expense'" });
+      return res.status(400).json({ error: "type must be 'income' or 'expense'" });
     }
 
     const v = Number(value);
@@ -2634,54 +5223,69 @@ app.post("/transactions", auth, async (req, res) => {
     const aId = Number(accountId);
     const cId = Number(categoryId);
     if (!Number.isInteger(aId) || !Number.isInteger(cId)) {
-      return res
-        .status(400)
-        .json({ error: "accountId and categoryId must be integers" });
+      return res.status(400).json({ error: "accountId and categoryId must be integers" });
     }
 
     const d = new Date(date);
     if (Number.isNaN(d.getTime())) {
-      return res
-        .status(400)
-        .json({ error: "date must be a valid ISO date string" });
+      return res.status(400).json({ error: "date must be a valid ISO date string" });
     }
 
-    // (Opcional, mas recomendado) garantir que account/category pertencem ao usuário
     const [acc, cat] = await Promise.all([
       prisma.account.findFirst({ where: { id: aId, userId: req.userId } }),
       prisma.category.findFirst({ where: { id: cId, userId: req.userId } }),
     ]);
 
-    if (!acc)
-      return res.status(400).json({ error: "Invalid accountId for this user" });
-    if (!cat)
-      return res
-        .status(400)
-        .json({ error: "Invalid categoryId for this user" });
+    if (!acc) return res.status(400).json({ error: "Invalid accountId for this user" });
+    if (!cat) return res.status(400).json({ error: "Invalid categoryId for this user" });
     if (cat.type !== type) {
-      return res.status(400).json({
-        error: "Category type must match transaction type",
-      });
+      return res.status(400).json({ error: "Category type must match transaction type" });
     }
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        type,
-        value: v,
-        description: description ?? null,
-        date: d,
-        userId: req.userId,
-        accountId: aId,
-        categoryId: cId,
+    const created = await prisma.$transaction(async (tx) => {
+      const transaction = await tx.transaction.create({
+        data: {
+          type,
+          value: roundMoney(v),
+          description: description ?? null,
+          date: d,
+          userId: req.userId,
+          accountId: aId,
+          categoryId: cId,
+        },
+      });
+
+      if (tagNames.length > 0) {
+        await replaceTransactionTags(tx, req.userId, transaction.id, tagNames);
+      }
+
+      return tx.transaction.findUnique({
+        where: { id: transaction.id },
+        include: TRANSACTION_INCLUDE,
+      });
+    });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId: created.id,
+      entityType: "transaction",
+      entityId: created.id,
+      action: "created",
+      afterData: {
+        type: created.type,
+        value: created.value,
+        description: created.description,
+        date: created.date,
+        accountId: created.accountId,
+        categoryId: created.categoryId,
+        tags: created.tags?.map((item) => item?.tag?.name).filter(Boolean),
       },
     });
 
-    res.json(transaction);
+    res.json(toTransactionPayload(created));
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ error: "Failed to create transaction", details: String(err) });
+    res.status(500).json({ error: "Failed to create transaction", details: String(err) });
   }
 });
 
@@ -2693,6 +5297,7 @@ app.put("/transactions/:id", auth, async (req, res) => {
 
     const existing = await prisma.transaction.findFirst({
       where: { id, userId: req.userId },
+      include: TRANSACTION_INCLUDE,
     });
     if (!existing) return res.status(404).json({ error: "Transaction not found" });
 
@@ -2729,37 +5334,66 @@ app.put("/transactions/:id", auth, async (req, res) => {
       prisma.category.findFirst({ where: { id: cId, userId: req.userId } }),
     ]);
 
-    if (!acc)
-      return res.status(400).json({ error: "Invalid accountId for this user" });
-    if (!cat)
-      return res
-        .status(400)
-        .json({ error: "Invalid categoryId for this user" });
+    if (!acc) return res.status(400).json({ error: "Invalid accountId for this user" });
+    if (!cat) return res.status(400).json({ error: "Invalid categoryId for this user" });
     if (cat.type !== type) {
-      return res.status(400).json({
-        error: "Category type must match transaction type",
-      });
+      return res.status(400).json({ error: "Category type must match transaction type" });
     }
 
-    const updated = await prisma.transaction.update({
-      where: { id },
-      data: {
-        type,
-        value: v,
-        description: description ?? null,
-        date: d,
-        accountId: aId,
-        categoryId: cId,
-      },
-      include: { category: true },
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.transaction.update({
+        where: { id },
+        data: {
+          type,
+          value: roundMoney(v),
+          description: description ?? null,
+          date: d,
+          accountId: aId,
+          categoryId: cId,
+        },
+      });
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "tags")) {
+        const tagNames = parseTagNames(req.body?.tags);
+        await replaceTransactionTags(tx, req.userId, id, tagNames);
+      }
+
+      return tx.transaction.findUnique({
+        where: { id },
+        include: TRANSACTION_INCLUDE,
+      });
     });
 
-    res.json(updated);
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId: id,
+      entityType: "transaction",
+      entityId: id,
+      action: "updated",
+      beforeData: {
+        type: existing.type,
+        value: existing.value,
+        description: existing.description,
+        date: existing.date,
+        accountId: existing.accountId,
+        categoryId: existing.categoryId,
+        tags: existing.tags?.map((item) => item?.tag?.name).filter(Boolean),
+      },
+      afterData: {
+        type: updated.type,
+        value: updated.value,
+        description: updated.description,
+        date: updated.date,
+        accountId: updated.accountId,
+        categoryId: updated.categoryId,
+        tags: updated.tags?.map((item) => item?.tag?.name).filter(Boolean),
+      },
+    });
+
+    res.json(toTransactionPayload(updated));
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ error: "Failed to update transaction", details: String(err) });
+    res.status(500).json({ error: "Failed to update transaction", details: String(err) });
   }
 });
 
@@ -2770,25 +5404,51 @@ app.delete("/transactions/:id", auth, async (req, res) => {
 
     const existing = await prisma.transaction.findFirst({
       where: { id, userId: req.userId },
+      include: TRANSACTION_INCLUDE,
     });
     if (!existing) return res.status(404).json({ error: "Transaction not found" });
 
     await prisma.transaction.delete({ where: { id } });
+
+    await writeAuditLog(prisma, {
+      userId: req.userId,
+      transactionId: id,
+      entityType: "transaction",
+      entityId: id,
+      action: "deleted",
+      beforeData: {
+        type: existing.type,
+        value: existing.value,
+        description: existing.description,
+        date: existing.date,
+        accountId: existing.accountId,
+        categoryId: existing.categoryId,
+        tags: existing.tags?.map((item) => item?.tag?.name).filter(Boolean),
+      },
+    });
+
     res.json({ ok: true, id });
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ error: "Failed to delete transaction", details: String(err) });
+    res.status(500).json({ error: "Failed to delete transaction", details: String(err) });
   }
 });
 
 app.get("/transactions", auth, async (req, res) => {
-  const transactions = await prisma.transaction.findMany({
-    where: { userId: req.userId },
-    include: { category: true },
-  });
-  res.json(transactions);
+  try {
+    await processRecurringTransactions(req.userId);
+
+    const transactions = await prisma.transaction.findMany({
+      where: { userId: req.userId },
+      include: TRANSACTION_INCLUDE,
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+    });
+
+    res.json(transactions.map((item) => toTransactionPayload(item)));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to list transactions", details: String(err) });
+  }
 });
 
 const PORT = Number(process.env.PORT) || 3001;

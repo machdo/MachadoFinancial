@@ -34,6 +34,27 @@ function clampMoneyInput(raw) {
   return cleaned;
 }
 
+function parseTagInput(raw) {
+  const unique = new Map();
+  for (const item of String(raw ?? "").split(",")) {
+    const value = String(item ?? "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (unique.has(key)) continue;
+    unique.set(key, value);
+  }
+  return [...unique.values()];
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
 const ACCOUNT_TYPES = [
   { value: "checking", label: "Conta corrente" },
   { value: "wallet", label: "Carteira" },
@@ -82,6 +103,8 @@ export default function NewTransactionModal({
   const [categoryId, setCategoryId] = useState("");
   const [date, setDate] = useState(todayISO());
   const [description, setDescription] = useState("");
+  const [tagsRaw, setTagsRaw] = useState("");
+  const [receiptFile, setReceiptFile] = useState(null);
 
   const [catQuery, setCatQuery] = useState("");
 
@@ -131,6 +154,8 @@ export default function NewTransactionModal({
     setValueRaw("");
     setDate(todayISO());
     setDescription("");
+    setTagsRaw("");
+    setReceiptFile(null);
 
     setAccountId(
       accounts.some((a) => String(a.id) === String(defaultAcc))
@@ -315,6 +340,10 @@ export default function NewTransactionModal({
       }
     }
 
+    if (receiptFile && receiptFile.size > 2 * 1024 * 1024) {
+      return setErr("Comprovante excede o limite de 2MB.");
+    }
+
     try {
       setBusy(true);
 
@@ -330,7 +359,30 @@ export default function NewTransactionModal({
       const res = await axios.post(`${apiBase}/transactions`, payload, {
         headers: authHeaders(),
       });
-      const created = res.data;
+      let created = res.data;
+
+      const tags = parseTagInput(tagsRaw);
+      if (tags.length > 0 && created?.id) {
+        const tagsRes = await axios.put(
+          `${apiBase}/transactions/${created.id}/tags`,
+          { tags },
+          { headers: authHeaders() },
+        );
+        created = tagsRes.data;
+      }
+
+      if (receiptFile && created?.id) {
+        const contentBase64 = await fileToBase64(receiptFile);
+        await axios.post(
+          `${apiBase}/transactions/${created.id}/attachments`,
+          {
+            fileName: receiptFile.name,
+            mimeType: receiptFile.type || "application/octet-stream",
+            contentBase64,
+          },
+          { headers: authHeaders() },
+        );
+      }
 
       localStorage.setItem(LS_LAST_ACCOUNT, String(accountId));
       localStorage.setItem(LS_LAST_CATEGORY, String(categoryId));
@@ -743,6 +795,40 @@ export default function NewTransactionModal({
                           </div>
                         </div>
                       )}
+
+                      <div className="mt-3">
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          Tags personalizadas (separadas por vírgula)
+                        </div>
+                        <input
+                          className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                          placeholder="Ex.: mercado, familia, recorrente"
+                          value={tagsRaw}
+                          onChange={(event) => setTagsRaw(event.target.value)}
+                          disabled={busy}
+                        />
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          Comprovante (upload opcional, até 2MB)
+                        </div>
+                        <input
+                          className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600/30 dark:border-slate-800 dark:bg-slate-950"
+                          type="file"
+                          accept=".pdf,image/*"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0] ?? null;
+                            setReceiptFile(file);
+                          }}
+                          disabled={busy}
+                        />
+                        {receiptFile && (
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            Arquivo: {receiptFile.name}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -809,6 +895,31 @@ export default function NewTransactionModal({
                         <div className="text-sm font-semibold">
                           {description.trim()}
                         </div>
+                      </div>
+                    )}
+
+                    {parseTagInput(tagsRaw).length > 0 && (
+                      <div className="mt-3">
+                        <div className="text-xs text-slate-500 dark:text-slate-400">Tags</div>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {parseTagInput(tagsRaw).map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-full border border-slate-200 px-2 py-1 text-xs dark:border-slate-700"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {receiptFile && (
+                      <div className="mt-3">
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          Comprovante
+                        </div>
+                        <div className="text-sm font-semibold">{receiptFile.name}</div>
                       </div>
                     )}
                   </div>

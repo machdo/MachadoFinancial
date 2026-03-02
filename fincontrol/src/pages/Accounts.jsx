@@ -54,6 +54,19 @@ export default function Accounts({
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferError, setTransferError] = useState("");
   const [transferSuccess, setTransferSuccess] = useState("");
+  const [recurringRules, setRecurringRules] = useState([]);
+  const [recurringBusy, setRecurringBusy] = useState(false);
+  const [recurringFromId, setRecurringFromId] = useState("");
+  const [recurringToId, setRecurringToId] = useState("");
+  const [recurringAmount, setRecurringAmount] = useState("");
+  const [recurringFrequency, setRecurringFrequency] = useState("monthly");
+  const [recurringInterval, setRecurringInterval] = useState("1");
+  const [recurringStartDate, setRecurringStartDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate(),
+    ).padStart(2, "0")}`;
+  });
 
   const accountStats = useMemo(() => {
     const map = new Map();
@@ -86,6 +99,34 @@ export default function Accounts({
       setTransferToId(String(accounts[1]?.id ?? accounts[0]?.id ?? ""));
     }
   }, [accounts, transferFromId, transferToId]);
+
+  useEffect(() => {
+    if (accounts.length < 2) {
+      setRecurringFromId("");
+      setRecurringToId("");
+      return;
+    }
+    if (!accounts.some((account) => String(account.id) === String(recurringFromId))) {
+      setRecurringFromId(String(accounts[0].id));
+    }
+    if (!accounts.some((account) => String(account.id) === String(recurringToId))) {
+      setRecurringToId(String(accounts[1]?.id ?? accounts[0]?.id ?? ""));
+    }
+  }, [accounts, recurringFromId, recurringToId]);
+
+  useEffect(() => {
+    async function loadRecurringRules() {
+      try {
+        const response = await axios.get(`${API_BASE}/accounts/transfer-recurring`, {
+          headers: authHeaders(),
+        });
+        setRecurringRules(response?.data ?? []);
+      } catch {
+        setRecurringRules([]);
+      }
+    }
+    loadRecurringRules();
+  }, []);
 
   async function handleCreate(event) {
     event.preventDefault();
@@ -257,6 +298,130 @@ export default function Accounts({
     }
   }
 
+  async function reloadRecurringTransfers() {
+    const response = await axios.get(`${API_BASE}/accounts/transfer-recurring`, {
+      headers: authHeaders(),
+    });
+    setRecurringRules(response?.data ?? []);
+  }
+
+  async function handleRecurringCreate(event) {
+    event.preventDefault();
+    if (recurringBusy) return;
+
+    setTransferError("");
+    setTransferSuccess("");
+    if (!recurringFromId || !recurringToId) {
+      setTransferError("Selecione origem e destino da transferencia recorrente.");
+      return;
+    }
+    if (String(recurringFromId) === String(recurringToId)) {
+      setTransferError("Origem e destino da recorrencia devem ser diferentes.");
+      return;
+    }
+
+    const amount = normalizeNumber(recurringAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setTransferError("Informe um valor valido para recorrencia.");
+      return;
+    }
+
+    setRecurringBusy(true);
+    try {
+      await axios.post(
+        `${API_BASE}/accounts/transfer-recurring`,
+        {
+          fromAccountId: Number(recurringFromId),
+          toAccountId: Number(recurringToId),
+          amount,
+          frequency: recurringFrequency,
+          interval: Number(recurringInterval || 1),
+          startDate: recurringStartDate,
+        },
+        { headers: authHeaders() },
+      );
+      setRecurringAmount("");
+      await reloadRecurringTransfers();
+      setTransferSuccess("Transferencia recorrente criada.");
+    } catch (requestError) {
+      setTransferError(
+        requestError?.response?.data?.error ||
+          "Nao foi possivel criar transferencia recorrente.",
+      );
+    } finally {
+      setRecurringBusy(false);
+    }
+  }
+
+  async function handleRecurringToggle(rule) {
+    if (recurringBusy) return;
+    setRecurringBusy(true);
+    setTransferError("");
+    setTransferSuccess("");
+    try {
+      await axios.put(
+        `${API_BASE}/accounts/transfer-recurring/${rule.id}`,
+        { active: !rule.active },
+        { headers: authHeaders() },
+      );
+      await reloadRecurringTransfers();
+      setTransferSuccess("Regra recorrente atualizada.");
+    } catch (requestError) {
+      setTransferError(
+        requestError?.response?.data?.error ||
+          "Nao foi possivel atualizar regra recorrente.",
+      );
+    } finally {
+      setRecurringBusy(false);
+    }
+  }
+
+  async function handleRecurringDelete(ruleId) {
+    if (recurringBusy) return;
+    const confirmed = window.confirm("Excluir esta transferencia recorrente?");
+    if (!confirmed) return;
+    setRecurringBusy(true);
+    setTransferError("");
+    setTransferSuccess("");
+    try {
+      await axios.delete(`${API_BASE}/accounts/transfer-recurring/${ruleId}`, {
+        headers: authHeaders(),
+      });
+      await reloadRecurringTransfers();
+      setTransferSuccess("Transferencia recorrente excluida.");
+    } catch (requestError) {
+      setTransferError(
+        requestError?.response?.data?.error ||
+          "Nao foi possivel excluir transferencia recorrente.",
+      );
+    } finally {
+      setRecurringBusy(false);
+    }
+  }
+
+  async function handleRunRecurringNow() {
+    if (recurringBusy) return;
+    setRecurringBusy(true);
+    setTransferError("");
+    setTransferSuccess("");
+    try {
+      await axios.post(
+        `${API_BASE}/accounts/transfer-recurring/run`,
+        {},
+        { headers: authHeaders() },
+      );
+      await Promise.all([reloadRecurringTransfers()]);
+      setTransferSuccess("Transferencias recorrentes processadas.");
+    } catch (requestError) {
+      setTransferError(
+        requestError?.response?.data?.error ||
+          "Nao foi possivel processar transferencias recorrentes.",
+      );
+    } finally {
+      setRecurringBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
@@ -376,6 +541,139 @@ export default function Accounts({
         {transferSuccess && (
           <div className="mt-3 text-sm font-medium text-emerald-600">{transferSuccess}</div>
         )}
+      </section>
+
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Transferencia automatica recorrente</div>
+          <button
+            type="button"
+            className="rounded-lg border border-slate-200 px-3 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
+            onClick={handleRunRecurringNow}
+            disabled={recurringBusy}
+          >
+            Processar agora
+          </button>
+        </div>
+
+        <form className="mt-3 grid gap-3 md:grid-cols-4" onSubmit={handleRecurringCreate}>
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-600/30 dark:border-slate-800 dark:bg-slate-950"
+            value={recurringFromId}
+            onChange={(event) => setRecurringFromId(event.target.value)}
+            disabled={recurringBusy || accounts.length < 2}
+          >
+            <option value="">Origem</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-600/30 dark:border-slate-800 dark:bg-slate-950"
+            value={recurringToId}
+            onChange={(event) => setRecurringToId(event.target.value)}
+            disabled={recurringBusy || accounts.length < 2}
+          >
+            <option value="">Destino</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+
+          <input
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-600/30 dark:border-slate-800 dark:bg-slate-950"
+            placeholder="Valor"
+            inputMode="decimal"
+            value={recurringAmount}
+            onChange={(event) => setRecurringAmount(event.target.value)}
+            disabled={recurringBusy || accounts.length < 2}
+          />
+
+          <div className="grid grid-cols-3 gap-2">
+            <select
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-600/30 dark:border-slate-800 dark:bg-slate-950"
+              value={recurringFrequency}
+              onChange={(event) => setRecurringFrequency(event.target.value)}
+              disabled={recurringBusy}
+            >
+              <option value="daily">Diaria</option>
+              <option value="weekly">Semanal</option>
+              <option value="monthly">Mensal</option>
+              <option value="yearly">Anual</option>
+            </select>
+            <input
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-600/30 dark:border-slate-800 dark:bg-slate-950"
+              type="number"
+              min={1}
+              max={120}
+              value={recurringInterval}
+              onChange={(event) => setRecurringInterval(event.target.value)}
+              disabled={recurringBusy}
+            />
+            <input
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-600/30 dark:border-slate-800 dark:bg-slate-950"
+              type="date"
+              value={recurringStartDate}
+              onChange={(event) => setRecurringStartDate(event.target.value)}
+              disabled={recurringBusy}
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 md:col-span-4"
+            disabled={recurringBusy || accounts.length < 2}
+          >
+            Criar transferencia recorrente
+          </button>
+        </form>
+
+        <div className="mt-3 space-y-2">
+          {recurringRules.map((rule) => (
+            <div
+              key={rule.id}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-xs dark:border-slate-800"
+            >
+              <div className="font-semibold">
+                {rule.fromAccountName || `Conta ${rule.fromAccountId}`} -&gt;{" "}
+                {rule.toAccountName || `Conta ${rule.toAccountId}`} ({money(rule.amount)})
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                {rule.frequency} a cada {rule.interval} | proxima:{" "}
+                {rule.nextRunAt ? new Date(rule.nextRunAt).toLocaleDateString("pt-BR") : "-"} |{" "}
+                {rule.active ? "ativa" : "inativa"}
+              </div>
+              <div className="mt-1 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleRecurringToggle(rule)}
+                  className="rounded border border-slate-200 px-2 py-1 text-[11px] hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
+                  disabled={recurringBusy}
+                >
+                  {rule.active ? "Desativar" : "Ativar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRecurringDelete(rule.id)}
+                  className="rounded border border-rose-200 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                  disabled={recurringBusy}
+                >
+                  Excluir
+                </button>
+              </div>
+            </div>
+          ))}
+          {recurringRules.length === 0 && (
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              Nenhuma transferencia recorrente cadastrada.
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">

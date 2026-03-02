@@ -159,6 +159,7 @@ export default function Dashboard({ onLogout }) {
           transactions={transactions}
           categories={categories}
           accounts={accounts}
+          onTransactionCreated={handleTransactionCreated}
           onTransactionUpdated={handleTransactionUpdated}
           onTransactionDeleted={handleTransactionDeleted}
         />

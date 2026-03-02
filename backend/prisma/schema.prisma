@@ -15,6 +15,14 @@ model User {
   accounts     Account[]
   categories   Category[]
   transactions Transaction[]
+  tags         Tag[]
+  transactionTags TransactionTag[]
+  transactionAttachments TransactionAttachment[]
+  recurringTransactions RecurringTransaction[]
+  recurringTransfers RecurringTransfer[]
+  bankImportBatches BankImportBatch[]
+  bankStatementEntries BankStatementEntry[]
+  auditLogs    AuditLog[]
   goals        Goal[]
   categoryBudgets CategoryBudget[]
   annualBudgets AnnualBudget[]
@@ -33,6 +41,9 @@ model Account {
   user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]
   accountLimits AccountLimit[]
+  recurringTransactions RecurringTransaction[]
+  outgoingRecurringTransfers RecurringTransfer[] @relation("RecurringTransferFrom")
+  incomingRecurringTransfers RecurringTransfer[] @relation("RecurringTransferTo")
 }
 
 model Category {
@@ -44,20 +55,174 @@ model Category {
   user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]
   categoryBudgets CategoryBudget[]
+  recurringTransactions RecurringTransaction[]
 }
 
 model Transaction {
-  id          Int      @id @default(autoincrement())
-  type        String
-  value       Float
-  description String?
-  date        DateTime
-  userId      Int
-  accountId   Int
-  categoryId  Int
-  user        User     @relation(fields: [userId], references: [id])
-  account     Account  @relation(fields: [accountId], references: [id])
-  category    Category @relation(fields: [categoryId], references: [id])
+  id                    Int                  @id @default(autoincrement())
+  type                  String
+  value                 Float
+  description           String?
+  date                  DateTime
+  externalRef           String?
+  isRecurringGenerated  Boolean              @default(false)
+  recurringTransactionId Int?
+  userId                Int
+  accountId             Int
+  categoryId            Int
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  user                  User                 @relation(fields: [userId], references: [id])
+  account               Account              @relation(fields: [accountId], references: [id])
+  category              Category             @relation(fields: [categoryId], references: [id])
+  recurringTransaction  RecurringTransaction? @relation(fields: [recurringTransactionId], references: [id], onDelete: SetNull)
+  attachments           TransactionAttachment[]
+  tags                  TransactionTag[]
+  reconciledEntries     BankStatementEntry[] @relation("ReconciledTransaction")
+  auditLogs             AuditLog[]
+}
+
+model Tag {
+  id               Int              @id @default(autoincrement())
+  name             String
+  color            String           @default("#64748b")
+  userId           Int
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  user             User             @relation(fields: [userId], references: [id])
+  transactionLinks TransactionTag[]
+
+  @@unique([userId, name])
+}
+
+model TransactionTag {
+  transactionId Int
+  tagId         Int
+  userId        Int
+  createdAt     DateTime    @default(now())
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag           Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+}
+
+model TransactionAttachment {
+  id            Int         @id @default(autoincrement())
+  transactionId Int
+  userId        Int
+  fileName      String
+  mimeType      String
+  sizeBytes     Int
+  contentBase64 String
+  createdAt     DateTime    @default(now())
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RecurringTransaction {
+  id                   Int           @id @default(autoincrement())
+  userId               Int
+  accountId            Int
+  categoryId           Int
+  type                 String
+  value                Float
+  description          String?
+  frequency            String
+  interval             Int           @default(1)
+  dayOfMonth           Int?
+  dayOfWeek            Int?
+  startDate            DateTime
+  endDate              DateTime?
+  nextRunAt            DateTime
+  lastRunAt            DateTime?
+  installmentsTotal    Int?
+  installmentsRemaining Int?
+  active               Boolean       @default(true)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  user                 User          @relation(fields: [userId], references: [id])
+  account              Account       @relation(fields: [accountId], references: [id])
+  category             Category      @relation(fields: [categoryId], references: [id])
+  transactions         Transaction[]
+
+  @@index([userId, active, nextRunAt])
+}
+
+model RecurringTransfer {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  fromAccountId Int
+  toAccountId  Int
+  amount       Float
+  description  String?
+  frequency    String
+  interval     Int      @default(1)
+  startDate    DateTime
+  endDate      DateTime?
+  nextRunAt    DateTime
+  lastRunAt    DateTime?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+  fromAccount  Account  @relation("RecurringTransferFrom", fields: [fromAccountId], references: [id])
+  toAccount    Account  @relation("RecurringTransferTo", fields: [toAccountId], references: [id])
+
+  @@index([userId, active, nextRunAt])
+}
+
+model BankImportBatch {
+  id         Int                  @id @default(autoincrement())
+  userId     Int
+  sourceType String
+  fileName   String?
+  totalRows  Int                  @default(0)
+  createdAt  DateTime             @default(now())
+  user       User                 @relation(fields: [userId], references: [id])
+  entries    BankStatementEntry[]
+}
+
+model BankStatementEntry {
+  id                   Int              @id @default(autoincrement())
+  userId               Int
+  importBatchId        Int?
+  sourceType           String
+  date                 DateTime
+  amount               Float
+  description          String?
+  fitId                String?
+  fingerprint          String
+  possibleDuplicate    Boolean          @default(false)
+  status               String           @default("pending")
+  matchedTransactionId Int?
+  matchedAt            DateTime?
+  createdAt            DateTime         @default(now())
+  user                 User             @relation(fields: [userId], references: [id])
+  importBatch          BankImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  matchedTransaction   Transaction?     @relation("ReconciledTransaction", fields: [matchedTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([userId, fingerprint])
+  @@index([userId, matchedTransactionId])
+}
+
+model AuditLog {
+  id           Int          @id @default(autoincrement())
+  userId       Int
+  transactionId Int?
+  entityType   String
+  entityId     String
+  action       String
+  beforeData   Json?
+  afterData    Json?
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  user         User         @relation(fields: [userId], references: [id])
+  transaction  Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, entityType, entityId])
 }
 
 model Goal {
