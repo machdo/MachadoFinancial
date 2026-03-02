@@ -53,6 +53,7 @@ export default function Transactions({
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [monthFilter, setMonthFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState("all");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [rowBusyId, setRowBusyId] = useState(null);
@@ -73,6 +74,8 @@ export default function Transactions({
   const [auditCount, setAuditCount] = useState(0);
   const [reconPendingCount, setReconPendingCount] = useState(0);
   const [duplicatesCount, setDuplicatesCount] = useState(0);
+  const [duplicateGroups, setDuplicateGroups] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
 
   const [recType, setRecType] = useState("expense");
   const [recValueRaw, setRecValueRaw] = useState("");
@@ -103,11 +106,38 @@ export default function Transactions({
     return Array.from(values).filter(Boolean).sort((a, b) => (a > b ? -1 : 1));
   }, [transactions]);
 
+  const availableTags = useMemo(() => {
+    const tagsById = new Map();
+
+    for (const tag of tags) {
+      if (!tag?.id) continue;
+      tagsById.set(String(tag.id), tag);
+    }
+
+    for (const transaction of transactions) {
+      for (const tag of transaction.tags || []) {
+        if (!tag?.id) continue;
+        const key = String(tag.id);
+        if (!tagsById.has(key)) tagsById.set(key, tag);
+      }
+    }
+
+    return Array.from(tagsById.values()).sort((left, right) =>
+      String(left?.name || "").localeCompare(String(right?.name || ""), "pt-BR"),
+    );
+  }, [tags, transactions]);
+
   const filtered = useMemo(() => {
     return transactions
       .filter((transaction) => {
         if (typeFilter !== "all" && transaction.type !== typeFilter) return false;
         if (monthFilter !== "all" && monthKey(transaction.date) !== monthFilter) return false;
+        if (
+          tagFilter !== "all" &&
+          !(transaction.tags || []).some((tag) => String(tag.id) === String(tagFilter))
+        ) {
+          return false;
+        }
         if (!query.trim()) return true;
 
         const category = categories.find((item) => item.id === transaction.categoryId);
@@ -127,7 +157,7 @@ export default function Transactions({
         return haystack.includes(query.trim().toLowerCase());
       })
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [transactions, categories, accounts, typeFilter, monthFilter, query]);
+  }, [transactions, categories, accounts, typeFilter, monthFilter, tagFilter, query]);
 
   const totals = useMemo(() => {
     const income = filtered
@@ -153,6 +183,7 @@ export default function Transactions({
         setReconPendingCount(
           (reconRes.data || []).filter((item) => item.status === "pending").length,
         );
+        setAuditLogs(auditRes.data || []);
         setAuditCount((auditRes.data || []).length);
       } catch {}
     }
