@@ -13,6 +13,7 @@ import Goals from "./Goals";
 import Reports from "./Reports";
 import Investments from "./Investments";
 import Budgets from "./Budgets";
+import CreditCards from "./CreditCards";
 import Profile from "./Profile";
 import { NAV_ITEMS } from "../constants/navigation";
 import { API_BASE, authHeaders } from "../lib/finance";
@@ -194,6 +195,10 @@ export default function Dashboard({ onLogout }) {
 
     if (activePage === "investments") {
       return <Investments transactions={transactions} categories={categories} />;
+    }
+
+    if (activePage === "creditCards") {
+      return <CreditCards />;
     }
 
     if (activePage === "budgets") {

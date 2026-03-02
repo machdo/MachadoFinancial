@@ -9,7 +9,7 @@ Aplicacao de controle financeiro pessoal com frontend em React (Vite + Tailwind)
 - Login com token JWT.
 - Edicao de nome e email no perfil.
 - Alteracao de senha com validacoes (senha atual, minimo de 6 caracteres, confirmacao).
-- Exclusao definitiva da conta com remocao de dados relacionados (transacoes, metas, contas, categorias, orcamentos e limites).
+- Exclusao definitiva da conta com remocao de dados relacionados (transacoes, metas, contas, categorias, orcamentos, limites, cartoes e faturas).
 
 ### 2) Dashboard financeiro
 - Resumo mensal de receitas, despesas e saldo.
@@ -68,13 +68,25 @@ Aplicacao de controle financeiro pessoal com frontend em React (Vite + Tailwind)
 - Sugestao de alocacao por perfil (conservador, moderado e arrojado).
 - Gestao de carteira de investimentos (ativos, quantidade, preco medio, preco atual, resultado e distribuicao).
 
-### 10) Assistente IA
+### 10) Cartoes de credito
+- Cadastro de cartao de credito.
+- Limite total por cartao.
+- Limite disponivel calculado em tempo real.
+- Melhor dia de compra.
+- Data de fechamento.
+- Controle de fatura (criacao/atualizacao mensal).
+- Parcelamento automatico com distribuicao em faturas futuras.
+- Controle de valor pago por fatura.
+- Faturas passadas com historico.
+- Simulacao de impacto da fatura no fluxo de caixa.
+
+### 11) Assistente IA
 - Chat flutuante dentro do dashboard.
 - Prompts rapidos para analise financeira.
 - Respostas com base no contexto do usuario (contas, categorias, metas e historico financeiro).
 - Suporte a `groq` e `openai` no backend.
 
-### 11) Experiencia e interface
+### 12) Experiencia e interface
 - Tema claro/escuro com persistencia local.
 - Navegacao lateral no desktop e navegacao compacta no mobile.
 - Input de data customizado com calendario interativo.
@@ -201,6 +213,17 @@ Frontend padrao: `http://localhost:5173`
 - `PUT /budgets/accounts/:id`
 - `DELETE /budgets/accounts/:id`
 
+### Cartoes de credito
+- `GET /credit-cards`
+- `POST /credit-cards`
+- `PUT /credit-cards/:id`
+- `DELETE /credit-cards/:id`
+- `GET /credit-cards/:id/invoices?months=24`
+- `POST /credit-cards/:id/invoices`
+- `PUT /credit-cards/:id/invoices/:invoiceId/payment`
+- `POST /credit-cards/:id/installments`
+- `POST /credit-cards/simulate-impact`
+
 ### IA
 - `POST /ai/chat`
 - `POST /api/ai/chat`
@@ -230,5 +253,4 @@ Opcoes disponiveis:
 
 Itens anotados em `o que precisa.txt`:
 - Receitas e despesas previstas.
-- Controle de credito (limite, fatura, valor pago).
 - Calendario financeiro.

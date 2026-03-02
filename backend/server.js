@@ -120,6 +120,19 @@ function parsePositiveAmount(value) {
   return amount;
 }
 
+function parseNonNegativeAmount(value, fallback = null) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return amount;
+}
+
+function parseDayOfMonth(value, fallback = null) {
+  const day = Number(value);
+  if (!Number.isInteger(day) || day < 1 || day > 31) return fallback;
+  return day;
+}
+
 function parseAlertPercent(value, fallback = null) {
   if (value === undefined || value === null || value === "") return fallback;
   const alertPercent = Number(value);
@@ -156,6 +169,33 @@ function getYearRange(year) {
 
 function toMonthKey(year, month) {
   return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function shiftYearMonth(year, month, offset = 0) {
+  const date = new Date(year, month - 1 + offset, 1);
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+  };
+}
+
+function monthClosingDate(year, month, closingDay) {
+  const safeMonth = Math.max(1, Math.min(12, Number(month) || 1));
+  const lastDay = new Date(year, safeMonth, 0).getDate();
+  const safeDay = Math.max(1, Math.min(lastDay, Number(closingDay) || 1));
+  return new Date(year, safeMonth - 1, safeDay);
+}
+
+function splitInstallments(totalAmount, installments) {
+  const count = Math.max(1, Number(installments) || 1);
+  const totalCents = Math.round((Number(totalAmount) || 0) * 100);
+  const baseCents = Math.floor(totalCents / count);
+  const remainder = totalCents - baseCents * count;
+
+  return Array.from({ length: count }, (_, index) => {
+    const cents = baseCents + (index < remainder ? 1 : 0);
+    return cents / 100;
+  });
 }
 
 function listRecentMonths(year, month, count) {
@@ -492,6 +532,142 @@ function roundMoney(value) {
   return Math.round(numeric * 100) / 100;
 }
 
+function summarizeInvoiceAmounts(totalAmount, paidAmount) {
+  const total = Math.max(0, Number(totalAmount) || 0);
+  const paidRaw = Math.max(0, Number(paidAmount) || 0);
+  const paid = Math.min(paidRaw, total);
+  const outstanding = Math.max(0, total - paid);
+
+  return {
+    totalAmount: roundMoney(total),
+    paidAmount: roundMoney(paid),
+    outstandingAmount: roundMoney(outstanding),
+    status: outstanding <= 0 ? "paid" : "open",
+  };
+}
+
+function toCreditCardInvoicePayload(invoice) {
+  const summary = summarizeInvoiceAmounts(invoice.totalAmount, invoice.paidAmount);
+  return {
+    id: invoice.id,
+    userId: invoice.userId,
+    creditCardId: invoice.creditCardId,
+    year: invoice.year,
+    month: invoice.month,
+    monthKey: toMonthKey(invoice.year, invoice.month),
+    closingDate: invoice.closingDate,
+    totalAmount: summary.totalAmount,
+    paidAmount: summary.paidAmount,
+    outstandingAmount: summary.outstandingAmount,
+    status: summary.status,
+    createdAt: invoice.createdAt,
+    updatedAt: invoice.updatedAt,
+  };
+}
+
+function toCreditCardPayload(card, invoices = []) {
+  let outstandingAmount = 0;
+  let paidInvoices = 0;
+  let openInvoices = 0;
+
+  for (const invoice of invoices) {
+    const summary = summarizeInvoiceAmounts(invoice.totalAmount, invoice.paidAmount);
+    outstandingAmount += summary.outstandingAmount;
+    if (summary.status === "paid") paidInvoices += 1;
+    else openInvoices += 1;
+  }
+
+  const totalLimit = roundMoney(card.totalLimit);
+  const usedLimit = roundMoney(outstandingAmount);
+  const availableLimit = roundMoney(totalLimit - usedLimit);
+
+  return {
+    id: card.id,
+    name: card.name,
+    totalLimit,
+    usedLimit,
+    availableLimit,
+    bestPurchaseDay: card.bestPurchaseDay,
+    closingDay: card.closingDay,
+    autoInstallments: card.autoInstallments,
+    createdAt: card.createdAt,
+    updatedAt: card.updatedAt,
+    invoiceCount: invoices.length,
+    openInvoiceCount: openInvoices,
+    paidInvoiceCount: paidInvoices,
+  };
+}
+
+async function buildCreditCardsOverview(userId) {
+  const [cards, invoices] = await Promise.all([
+    prisma.creditCard.findMany({
+      where: { userId },
+      orderBy: [{ name: "asc" }],
+    }),
+    prisma.creditCardInvoice.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        creditCardId: true,
+        totalAmount: true,
+        paidAmount: true,
+      },
+    }),
+  ]);
+
+  const invoicesByCard = new Map();
+  for (const invoice of invoices) {
+    const current = invoicesByCard.get(invoice.creditCardId) ?? [];
+    current.push(invoice);
+    invoicesByCard.set(invoice.creditCardId, current);
+  }
+
+  const items = cards.map((card) =>
+    toCreditCardPayload(card, invoicesByCard.get(card.id) ?? []),
+  );
+
+  const summary = items.reduce(
+    (acc, item) => {
+      acc.totalLimit += item.totalLimit;
+      acc.usedLimit += item.usedLimit;
+      acc.availableLimit += item.availableLimit;
+      acc.openInvoiceCount += item.openInvoiceCount;
+      acc.paidInvoiceCount += item.paidInvoiceCount;
+      return acc;
+    },
+    {
+      cardsCount: items.length,
+      totalLimit: 0,
+      usedLimit: 0,
+      availableLimit: 0,
+      openInvoiceCount: 0,
+      paidInvoiceCount: 0,
+    },
+  );
+
+  return {
+    items,
+    summary: {
+      cardsCount: summary.cardsCount,
+      totalLimit: roundMoney(summary.totalLimit),
+      usedLimit: roundMoney(summary.usedLimit),
+      availableLimit: roundMoney(summary.availableLimit),
+      openInvoiceCount: summary.openInvoiceCount,
+      paidInvoiceCount: summary.paidInvoiceCount,
+    },
+  };
+}
+
+async function listCreditCardInvoices(userId, creditCardId, limit = 24) {
+  const rows = await prisma.creditCardInvoice.findMany({
+    where: { userId, creditCardId },
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+    take: limit,
+  });
+
+  return rows.map((row) => toCreditCardInvoicePayload(row));
+}
+
 function extractAssistantReply(payload) {
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content === "string") return content.trim();
@@ -764,6 +940,8 @@ app.delete("/me", auth, async (req, res) => {
       await tx.categoryBudget.deleteMany({ where: { userId: req.userId } });
       await tx.accountLimit.deleteMany({ where: { userId: req.userId } });
       await tx.annualBudget.deleteMany({ where: { userId: req.userId } });
+      await tx.creditCardInvoice.deleteMany({ where: { userId: req.userId } });
+      await tx.creditCard.deleteMany({ where: { userId: req.userId } });
       await tx.category.deleteMany({ where: { userId: req.userId } });
       await tx.account.deleteMany({ where: { userId: req.userId } });
       await tx.user.delete({ where: { id: req.userId } });
@@ -1345,6 +1523,561 @@ app.delete("/budgets/accounts/:id", auth, async (req, res) => {
     console.error(err);
     return res.status(500).json({
       error: "Falha ao excluir limite por conta.",
+      details: String(err),
+    });
+  }
+});
+
+// Cartoes de credito
+app.get("/credit-cards", auth, async (req, res) => {
+  try {
+    const overview = await buildCreditCardsOverview(req.userId);
+    return res.json(overview);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar cartoes de credito.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/credit-cards", auth, async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? "").trim();
+    const totalLimit = parsePositiveAmount(req.body?.totalLimit);
+    const bestPurchaseDay = parseDayOfMonth(req.body?.bestPurchaseDay);
+    const closingDay = parseDayOfMonth(req.body?.closingDay);
+    const autoInstallmentsProvided = Object.prototype.hasOwnProperty.call(
+      req.body ?? {},
+      "autoInstallments",
+    );
+    if (autoInstallmentsProvided && typeof req.body?.autoInstallments !== "boolean") {
+      return res.status(400).json({ error: "autoInstallments deve ser true ou false." });
+    }
+    const autoInstallments = autoInstallmentsProvided ? req.body.autoInstallments : true;
+
+    if (!name) return res.status(400).json({ error: "name e obrigatorio." });
+    if (!totalLimit) return res.status(400).json({ error: "totalLimit deve ser positivo." });
+    if (!bestPurchaseDay) {
+      return res.status(400).json({ error: "bestPurchaseDay deve estar entre 1 e 31." });
+    }
+    if (!closingDay) {
+      return res.status(400).json({ error: "closingDay deve estar entre 1 e 31." });
+    }
+
+    const created = await prisma.creditCard.create({
+      data: {
+        name,
+        totalLimit,
+        bestPurchaseDay,
+        closingDay,
+        autoInstallments,
+        userId: req.userId,
+      },
+    });
+
+    return res.status(201).json(toCreditCardPayload(created, []));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao cadastrar cartao de credito.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/credit-cards/simulate-impact", auth, async (req, res) => {
+  try {
+    const cardId = parseId(req.body?.cardId);
+    const invoiceId = parseId(req.body?.invoiceId);
+    const paymentFieldProvided = Object.prototype.hasOwnProperty.call(
+      req.body ?? {},
+      "paymentAmount",
+    );
+    const parsedPaymentAmount = parseNonNegativeAmount(req.body?.paymentAmount, null);
+
+    if (paymentFieldProvided && parsedPaymentAmount === null) {
+      return res.status(400).json({ error: "paymentAmount deve ser um numero maior ou igual a zero." });
+    }
+
+    let targetedInvoice = null;
+
+    if (invoiceId) {
+      targetedInvoice = await prisma.creditCardInvoice.findFirst({
+        where: {
+          id: invoiceId,
+          userId: req.userId,
+          ...(cardId ? { creditCardId: cardId } : {}),
+        },
+        include: {
+          creditCard: {
+            select: { id: true, name: true },
+          },
+        },
+      });
+
+      if (!targetedInvoice) {
+        return res.status(404).json({ error: "Fatura nao encontrada para simulacao." });
+      }
+    } else if (cardId) {
+      const year = parseBudgetYear(req.body?.year);
+      const month = parseBudgetMonth(req.body?.month);
+      if (year && month) {
+        targetedInvoice = await prisma.creditCardInvoice.findFirst({
+          where: {
+            userId: req.userId,
+            creditCardId: cardId,
+            year,
+            month,
+          },
+          include: {
+            creditCard: {
+              select: { id: true, name: true },
+            },
+          },
+        });
+      }
+    }
+
+    const targetedSummary = targetedInvoice
+      ? summarizeInvoiceAmounts(targetedInvoice.totalAmount, targetedInvoice.paidAmount)
+      : null;
+
+    let paymentAmount = parsedPaymentAmount;
+    if (paymentAmount === null) {
+      if (!targetedSummary) {
+        return res.status(400).json({
+          error: "Informe paymentAmount ou selecione uma fatura para simular impacto.",
+        });
+      }
+      paymentAmount = targetedSummary.outstandingAmount;
+    }
+
+    if (targetedSummary) {
+      paymentAmount = Math.min(paymentAmount, targetedSummary.outstandingAmount);
+    }
+
+    const [cashBalanceAggregate, invoices] = await Promise.all([
+      prisma.account.aggregate({
+        where: {
+          userId: req.userId,
+          NOT: { type: "credit" },
+        },
+        _sum: { balance: true },
+      }),
+      prisma.creditCardInvoice.findMany({
+        where: { userId: req.userId },
+        select: { totalAmount: true, paidAmount: true },
+      }),
+    ]);
+
+    let totalOutstanding = 0;
+    for (const invoice of invoices) {
+      totalOutstanding += summarizeInvoiceAmounts(invoice.totalAmount, invoice.paidAmount).outstandingAmount;
+    }
+
+    const cashBalance = roundMoney(Number(cashBalanceAggregate?._sum?.balance) || 0);
+    const normalizedPayment = roundMoney(Math.max(0, paymentAmount));
+    const impactPercent =
+      cashBalance > 0 ? roundMoney((normalizedPayment / cashBalance) * 100) : null;
+
+    return res.json({
+      paymentAmount: normalizedPayment,
+      cashBalance,
+      cashAfterPayment: roundMoney(cashBalance - normalizedPayment),
+      impactPercent,
+      outstandingBeforePayment: roundMoney(totalOutstanding),
+      outstandingAfterPayment: roundMoney(Math.max(0, totalOutstanding - normalizedPayment)),
+      targetedInvoice: targetedInvoice
+        ? {
+            id: targetedInvoice.id,
+            creditCardId: targetedInvoice.creditCardId,
+            creditCardName: targetedInvoice.creditCard?.name || `Cartao ${targetedInvoice.creditCardId}`,
+            year: targetedInvoice.year,
+            month: targetedInvoice.month,
+            monthKey: toMonthKey(targetedInvoice.year, targetedInvoice.month),
+            totalAmount: targetedSummary.totalAmount,
+            paidAmount: targetedSummary.paidAmount,
+            outstandingAmount: targetedSummary.outstandingAmount,
+            status: targetedSummary.status,
+          }
+        : null,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao simular impacto da fatura no fluxo.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/credit-cards/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.creditCard.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Cartao nao encontrado." });
+
+    const data = {};
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "name")) {
+      const name = String(req.body?.name ?? "").trim();
+      if (!name) return res.status(400).json({ error: "name e obrigatorio." });
+      data.name = name;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "totalLimit")) {
+      const totalLimit = parsePositiveAmount(req.body?.totalLimit);
+      if (!totalLimit) {
+        return res.status(400).json({ error: "totalLimit deve ser positivo." });
+      }
+      data.totalLimit = totalLimit;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "bestPurchaseDay")) {
+      const bestPurchaseDay = parseDayOfMonth(req.body?.bestPurchaseDay);
+      if (!bestPurchaseDay) {
+        return res.status(400).json({ error: "bestPurchaseDay deve estar entre 1 e 31." });
+      }
+      data.bestPurchaseDay = bestPurchaseDay;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "closingDay")) {
+      const closingDay = parseDayOfMonth(req.body?.closingDay);
+      if (!closingDay) {
+        return res.status(400).json({ error: "closingDay deve estar entre 1 e 31." });
+      }
+      data.closingDay = closingDay;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "autoInstallments")) {
+      if (typeof req.body?.autoInstallments !== "boolean") {
+        return res.status(400).json({ error: "autoInstallments deve ser true ou false." });
+      }
+      data.autoInstallments = req.body.autoInstallments;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: "Nenhum campo valido enviado para atualizacao." });
+    }
+
+    const updated = await prisma.creditCard.update({
+      where: { id },
+      data,
+    });
+    const invoices = await prisma.creditCardInvoice.findMany({
+      where: { userId: req.userId, creditCardId: id },
+      select: { id: true, totalAmount: true, paidAmount: true },
+    });
+
+    return res.json(toCreditCardPayload(updated, invoices));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar cartao de credito.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/credit-cards/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.creditCard.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Cartao nao encontrado." });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.creditCardInvoice.deleteMany({
+        where: { userId: req.userId, creditCardId: id },
+      });
+      await tx.creditCard.delete({ where: { id } });
+    });
+
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir cartao de credito.",
+      details: String(err),
+    });
+  }
+});
+
+app.get("/credit-cards/:id/invoices", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const card = await prisma.creditCard.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true, name: true, closingDay: true },
+    });
+    if (!card) return res.status(404).json({ error: "Cartao nao encontrado." });
+
+    const months = parseHistoryMonths(req.query?.months, 24);
+    const items = await listCreditCardInvoices(req.userId, id, months);
+
+    const summary = items.reduce(
+      (acc, item) => {
+        acc.totalAmount += item.totalAmount;
+        acc.paidAmount += item.paidAmount;
+        acc.outstandingAmount += item.outstandingAmount;
+        if (item.status === "paid") acc.paidInvoices += 1;
+        else acc.openInvoices += 1;
+        return acc;
+      },
+      {
+        totalAmount: 0,
+        paidAmount: 0,
+        outstandingAmount: 0,
+        openInvoices: 0,
+        paidInvoices: 0,
+      },
+    );
+
+    return res.json({
+      card: {
+        id: card.id,
+        name: card.name,
+        closingDay: card.closingDay,
+      },
+      summary: {
+        totalAmount: roundMoney(summary.totalAmount),
+        paidAmount: roundMoney(summary.paidAmount),
+        outstandingAmount: roundMoney(summary.outstandingAmount),
+        openInvoices: summary.openInvoices,
+        paidInvoices: summary.paidInvoices,
+      },
+      items,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar faturas do cartao.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/credit-cards/:id/invoices", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const card = await prisma.creditCard.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true, closingDay: true },
+    });
+    if (!card) return res.status(404).json({ error: "Cartao nao encontrado." });
+
+    const year = parseBudgetYear(req.body?.year);
+    const month = parseBudgetMonth(req.body?.month);
+    const totalAmount = parseNonNegativeAmount(req.body?.totalAmount);
+    const paidAmount = parseNonNegativeAmount(req.body?.paidAmount, 0);
+
+    if (!year) return res.status(400).json({ error: "year invalido." });
+    if (!month) return res.status(400).json({ error: "month invalido." });
+    if (totalAmount === null) {
+      return res.status(400).json({ error: "totalAmount deve ser um numero maior ou igual a zero." });
+    }
+    if (paidAmount === null) {
+      return res.status(400).json({ error: "paidAmount deve ser um numero maior ou igual a zero." });
+    }
+    if (paidAmount > totalAmount) {
+      return res.status(400).json({ error: "paidAmount nao pode ser maior que totalAmount." });
+    }
+
+    let closingDate = monthClosingDate(year, month, card.closingDay);
+    if (
+      Object.prototype.hasOwnProperty.call(req.body ?? {}, "closingDate") &&
+      req.body?.closingDate !== null &&
+      req.body?.closingDate !== ""
+    ) {
+      const parsed = new Date(req.body.closingDate);
+      if (Number.isNaN(parsed.getTime())) {
+        return res.status(400).json({ error: "closingDate invalida." });
+      }
+      closingDate = parsed;
+    }
+
+    const saved = await prisma.creditCardInvoice.upsert({
+      where: {
+        userId_creditCardId_year_month: {
+          userId: req.userId,
+          creditCardId: id,
+          year,
+          month,
+        },
+      },
+      create: {
+        userId: req.userId,
+        creditCardId: id,
+        year,
+        month,
+        totalAmount,
+        paidAmount,
+        closingDate,
+      },
+      update: {
+        totalAmount,
+        paidAmount,
+        closingDate,
+      },
+    });
+
+    return res.json(toCreditCardInvoicePayload(saved));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao salvar fatura do cartao.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/credit-cards/:id/invoices/:invoiceId/payment", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    const invoiceId = parseId(req.params.invoiceId);
+    if (!id || !invoiceId) return res.status(400).json({ error: "id invalido." });
+
+    const amount = parsePositiveAmount(req.body?.amount);
+    if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+
+    const invoice = await prisma.creditCardInvoice.findFirst({
+      where: { id: invoiceId, userId: req.userId, creditCardId: id },
+    });
+    if (!invoice) return res.status(404).json({ error: "Fatura nao encontrada." });
+
+    const summary = summarizeInvoiceAmounts(invoice.totalAmount, invoice.paidAmount);
+    if (summary.outstandingAmount <= 0) {
+      return res.status(409).json({ error: "A fatura ja esta totalmente paga." });
+    }
+
+    const appliedAmount = Math.min(amount, summary.outstandingAmount);
+    const updated = await prisma.creditCardInvoice.update({
+      where: { id: invoice.id },
+      data: {
+        paidAmount: { increment: appliedAmount },
+      },
+    });
+
+    return res.json({
+      requestedAmount: roundMoney(amount),
+      appliedAmount: roundMoney(appliedAmount),
+      invoice: toCreditCardInvoicePayload(updated),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao registrar pagamento da fatura.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/credit-cards/:id/installments", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const card = await prisma.creditCard.findFirst({
+      where: { id, userId: req.userId },
+      select: {
+        id: true,
+        name: true,
+        closingDay: true,
+        autoInstallments: true,
+      },
+    });
+    if (!card) return res.status(404).json({ error: "Cartao nao encontrado." });
+    if (!card.autoInstallments) {
+      return res
+        .status(409)
+        .json({ error: "Parcelamento automatico desativado para este cartao." });
+    }
+
+    const totalAmount = parsePositiveAmount(req.body?.totalAmount);
+    const installments = Number(req.body?.installments);
+    const current = currentYearMonth();
+    const startYear = parseBudgetYear(req.body?.startYear, current.year);
+    const startMonth = parseBudgetMonth(req.body?.startMonth, current.month);
+    const description = String(req.body?.description ?? "").trim();
+
+    if (!totalAmount) return res.status(400).json({ error: "totalAmount deve ser positivo." });
+    if (!Number.isInteger(installments) || installments < 2 || installments > 48) {
+      return res.status(400).json({ error: "installments deve ser um inteiro entre 2 e 48." });
+    }
+    if (!startYear || !startMonth) {
+      return res.status(400).json({ error: "startYear/startMonth invalidos." });
+    }
+
+    const installmentValues = splitInstallments(totalAmount, installments);
+    const scheduled = [];
+
+    await prisma.$transaction(async (tx) => {
+      for (let index = 0; index < installmentValues.length; index += 1) {
+        const installmentAmount = installmentValues[index];
+        const period = shiftYearMonth(startYear, startMonth, index);
+        const closingDate = monthClosingDate(period.year, period.month, card.closingDay);
+
+        await tx.creditCardInvoice.upsert({
+          where: {
+            userId_creditCardId_year_month: {
+              userId: req.userId,
+              creditCardId: id,
+              year: period.year,
+              month: period.month,
+            },
+          },
+          create: {
+            userId: req.userId,
+            creditCardId: id,
+            year: period.year,
+            month: period.month,
+            totalAmount: installmentAmount,
+            paidAmount: 0,
+            closingDate,
+          },
+          update: {
+            totalAmount: { increment: installmentAmount },
+            closingDate,
+          },
+        });
+
+        scheduled.push({
+          installmentNumber: index + 1,
+          installments,
+          amount: roundMoney(installmentAmount),
+          year: period.year,
+          month: period.month,
+          monthKey: toMonthKey(period.year, period.month),
+        });
+      }
+    });
+
+    return res.json({
+      ok: true,
+      cardId: card.id,
+      cardName: card.name,
+      description: description || null,
+      totalAmount: roundMoney(totalAmount),
+      installments,
+      startYear,
+      startMonth,
+      startMonthKey: toMonthKey(startYear, startMonth),
+      schedule: scheduled,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao aplicar parcelamento automatico.",
       details: String(err),
     });
   }

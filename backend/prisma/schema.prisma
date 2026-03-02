@@ -19,6 +19,8 @@ model User {
   categoryBudgets CategoryBudget[]
   annualBudgets AnnualBudget[]
   accountLimits AccountLimit[]
+  creditCards  CreditCard[]
+  creditCardInvoices CreditCardInvoice[]
   createdAt    DateTime      @default(now())
 }
 
@@ -109,4 +111,35 @@ model AccountLimit {
   account      Account  @relation(fields: [accountId], references: [id])
 
   @@unique([userId, accountId])
+}
+
+model CreditCard {
+  id               Int      @id @default(autoincrement())
+  name             String
+  totalLimit       Float
+  bestPurchaseDay  Int
+  closingDay       Int
+  autoInstallments Boolean  @default(true)
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id])
+  invoices         CreditCardInvoice[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model CreditCardInvoice {
+  id           Int        @id @default(autoincrement())
+  userId       Int
+  creditCardId Int
+  year         Int
+  month        Int
+  closingDate  DateTime?
+  totalAmount  Float      @default(0)
+  paidAmount   Float      @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  user         User       @relation(fields: [userId], references: [id])
+  creditCard   CreditCard @relation(fields: [creditCardId], references: [id])
+
+  @@unique([userId, creditCardId, year, month])
 }
