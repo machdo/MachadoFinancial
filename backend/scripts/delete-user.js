@@ -109,11 +109,22 @@ async function main() {
     return;
   }
 
-  const [transactionCount, goalCount, accountCount, categoryCount] = await Promise.all([
+  const [
+    transactionCount,
+    goalCount,
+    accountCount,
+    categoryCount,
+    categoryBudgetCount,
+    annualBudgetCount,
+    accountLimitCount,
+  ] = await Promise.all([
     prisma.transaction.count({ where: { userId: user.id } }),
     prisma.goal.count({ where: { userId: user.id } }),
     prisma.account.count({ where: { userId: user.id } }),
     prisma.category.count({ where: { userId: user.id } }),
+    prisma.categoryBudget.count({ where: { userId: user.id } }),
+    prisma.annualBudget.count({ where: { userId: user.id } }),
+    prisma.accountLimit.count({ where: { userId: user.id } }),
   ]);
 
   console.log("Usuario alvo:");
@@ -127,6 +138,9 @@ async function main() {
   console.log(`  metas: ${goalCount}`);
   console.log(`  contas: ${accountCount}`);
   console.log(`  categorias: ${categoryCount}`);
+  console.log(`  orcamentos por categoria: ${categoryBudgetCount}`);
+  console.log(`  orcamentos anuais: ${annualBudgetCount}`);
+  console.log(`  limites por conta: ${accountLimitCount}`);
 
   if (args.dryRun) {
     console.log("");
@@ -144,6 +158,9 @@ async function main() {
   await prisma.$transaction([
     prisma.transaction.deleteMany({ where: { userId: user.id } }),
     prisma.goal.deleteMany({ where: { userId: user.id } }),
+    prisma.categoryBudget.deleteMany({ where: { userId: user.id } }),
+    prisma.accountLimit.deleteMany({ where: { userId: user.id } }),
+    prisma.annualBudget.deleteMany({ where: { userId: user.id } }),
     prisma.account.deleteMany({ where: { userId: user.id } }),
     prisma.category.deleteMany({ where: { userId: user.id } }),
     prisma.user.delete({ where: { id: user.id } }),

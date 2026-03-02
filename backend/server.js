@@ -102,6 +102,332 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
 }
 
+function parseBudgetYear(value, fallback = null) {
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) return fallback;
+  return year;
+}
+
+function parseBudgetMonth(value, fallback = null) {
+  const month = Number(value);
+  if (!Number.isInteger(month) || month < 1 || month > 12) return fallback;
+  return month;
+}
+
+function parsePositiveAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount;
+}
+
+function parseAlertPercent(value, fallback = null) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const alertPercent = Number(value);
+  if (!Number.isFinite(alertPercent) || alertPercent <= 0 || alertPercent > 100) {
+    return null;
+  }
+  return alertPercent;
+}
+
+function parseHistoryMonths(value, fallback = 12) {
+  const months = Number(value);
+  if (!Number.isInteger(months) || months < 1 || months > 24) return fallback;
+  return months;
+}
+
+function currentYearMonth() {
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+}
+
+function getMonthRange(year, month) {
+  return {
+    start: new Date(year, month - 1, 1),
+    end: new Date(year, month, 1),
+  };
+}
+
+function getYearRange(year) {
+  return {
+    start: new Date(year, 0, 1),
+    end: new Date(year + 1, 0, 1),
+  };
+}
+
+function toMonthKey(year, month) {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function listRecentMonths(year, month, count) {
+  const months = [];
+  let currentYear = year;
+  let currentMonth = month;
+
+  for (let index = 0; index < count; index += 1) {
+    months.push({
+      year: currentYear,
+      month: currentMonth,
+      key: toMonthKey(currentYear, currentMonth),
+    });
+
+    currentMonth -= 1;
+    if (currentMonth < 1) {
+      currentMonth = 12;
+      currentYear -= 1;
+    }
+  }
+
+  return months.reverse();
+}
+
+function toProgressPercent(realized, planned) {
+  if (planned <= 0) return 0;
+  return (realized / planned) * 100;
+}
+
+async function buildBudgetOverview(userId, year, month, historyMonths = 12) {
+  const { start: monthStart, end: monthEnd } = getMonthRange(year, month);
+  const { start: yearStart, end: yearEnd } = getYearRange(year);
+  const historyPeriod = listRecentMonths(year, month, historyMonths);
+  const historyStart = new Date(historyPeriod[0].year, historyPeriod[0].month - 1, 1);
+
+  const [categoryBudgets, expenseByCategoryRows, accountLimits, expenseByAccountRows, annualBudget, annualExpenseAggregate, monthlyExpenseAggregate, historyBudgets, historyTransactions] =
+    await Promise.all([
+      prisma.categoryBudget.findMany({
+        where: { userId, year, month },
+        include: {
+          category: {
+            select: { id: true, name: true, color: true, type: true },
+          },
+        },
+        orderBy: [{ categoryId: "asc" }],
+      }),
+      prisma.transaction.groupBy({
+        by: ["categoryId"],
+        where: {
+          userId,
+          type: "expense",
+          date: { gte: monthStart, lt: monthEnd },
+        },
+        _sum: { value: true },
+      }),
+      prisma.accountLimit.findMany({
+        where: { userId },
+        include: {
+          account: {
+            select: { id: true, name: true, type: true, balance: true },
+          },
+        },
+        orderBy: [{ accountId: "asc" }],
+      }),
+      prisma.transaction.groupBy({
+        by: ["accountId"],
+        where: {
+          userId,
+          type: "expense",
+          date: { gte: monthStart, lt: monthEnd },
+        },
+        _sum: { value: true },
+      }),
+      prisma.annualBudget.findUnique({
+        where: { userId_year: { userId, year } },
+      }),
+      prisma.transaction.aggregate({
+        where: {
+          userId,
+          type: "expense",
+          date: { gte: yearStart, lt: yearEnd },
+        },
+        _sum: { value: true },
+      }),
+      prisma.transaction.aggregate({
+        where: {
+          userId,
+          type: "expense",
+          date: { gte: monthStart, lt: monthEnd },
+        },
+        _sum: { value: true },
+      }),
+      prisma.categoryBudget.findMany({
+        where: {
+          userId,
+          OR: historyPeriod.map((item) => ({ year: item.year, month: item.month })),
+        },
+        select: { year: true, month: true, amount: true },
+      }),
+      prisma.transaction.findMany({
+        where: {
+          userId,
+          type: "expense",
+          date: { gte: historyStart, lt: monthEnd },
+        },
+        select: { value: true, date: true },
+      }),
+    ]);
+
+  const expenseByCategory = new Map();
+  for (const row of expenseByCategoryRows) {
+    expenseByCategory.set(row.categoryId, Number(row?._sum?.value) || 0);
+  }
+
+  const expenseByAccount = new Map();
+  for (const row of expenseByAccountRows) {
+    expenseByAccount.set(row.accountId, Number(row?._sum?.value) || 0);
+  }
+
+  const categoryProgress = categoryBudgets
+    .filter((item) => item.category?.type === "expense")
+    .map((budget) => {
+      const plannedAmount = Number(budget.amount) || 0;
+      const realizedAmount = expenseByCategory.get(budget.categoryId) || 0;
+      const progressPercent = toProgressPercent(realizedAmount, plannedAmount);
+      const alertPercent = Number(budget.alertPercent) || 80;
+      const alertTriggered = plannedAmount > 0 && progressPercent >= alertPercent;
+
+      return {
+        id: budget.id,
+        categoryId: budget.categoryId,
+        categoryName: budget.category?.name || `Categoria ${budget.categoryId}`,
+        categoryColor: budget.category?.color || "#64748b",
+        year: budget.year,
+        month: budget.month,
+        plannedAmount: roundMoney(plannedAmount),
+        realizedAmount: roundMoney(realizedAmount),
+        remainingAmount: roundMoney(plannedAmount - realizedAmount),
+        progressPercent: roundMoney(progressPercent),
+        alertPercent,
+        alertTriggered,
+      };
+    })
+    .sort((a, b) => b.progressPercent - a.progressPercent);
+
+  const accountLimitProgress = accountLimits
+    .map((limit) => {
+      const plannedAmount = Number(limit.monthlyLimit) || 0;
+      const realizedAmount = expenseByAccount.get(limit.accountId) || 0;
+      const progressPercent = toProgressPercent(realizedAmount, plannedAmount);
+      const alertPercent = Number(limit.alertPercent) || 80;
+      const alertTriggered = plannedAmount > 0 && progressPercent >= alertPercent;
+
+      return {
+        id: limit.id,
+        accountId: limit.accountId,
+        accountName: limit.account?.name || `Conta ${limit.accountId}`,
+        accountType: limit.account?.type || "",
+        monthlyLimit: roundMoney(plannedAmount),
+        realizedAmount: roundMoney(realizedAmount),
+        remainingAmount: roundMoney(plannedAmount - realizedAmount),
+        progressPercent: roundMoney(progressPercent),
+        alertPercent,
+        alertTriggered,
+      };
+    })
+    .sort((a, b) => b.progressPercent - a.progressPercent);
+
+  const monthlyPlanned = categoryProgress.reduce((sum, item) => sum + item.plannedAmount, 0);
+  const monthlyRealized = Number(monthlyExpenseAggregate?._sum?.value) || 0;
+  const monthlyProgressPercent = toProgressPercent(monthlyRealized, monthlyPlanned);
+
+  const annualPlanned = Number(annualBudget?.amount) || 0;
+  const annualRealized = Number(annualExpenseAggregate?._sum?.value) || 0;
+  const annualProgressPercent = toProgressPercent(annualRealized, annualPlanned);
+  const annualAlertPercent = Number(annualBudget?.alertPercent) || 80;
+  const annualAlertTriggered = annualPlanned > 0 && annualProgressPercent >= annualAlertPercent;
+
+  const alerts = [];
+  for (const categoryItem of categoryProgress) {
+    if (!categoryItem.alertTriggered) continue;
+    alerts.push({
+      kind: "category",
+      targetId: categoryItem.categoryId,
+      targetName: categoryItem.categoryName,
+      progressPercent: categoryItem.progressPercent,
+      alertPercent: categoryItem.alertPercent,
+      plannedAmount: categoryItem.plannedAmount,
+      realizedAmount: categoryItem.realizedAmount,
+    });
+  }
+
+  for (const accountItem of accountLimitProgress) {
+    if (!accountItem.alertTriggered) continue;
+    alerts.push({
+      kind: "account",
+      targetId: accountItem.accountId,
+      targetName: accountItem.accountName,
+      progressPercent: accountItem.progressPercent,
+      alertPercent: accountItem.alertPercent,
+      plannedAmount: accountItem.monthlyLimit,
+      realizedAmount: accountItem.realizedAmount,
+    });
+  }
+
+  if (annualAlertTriggered) {
+    alerts.push({
+      kind: "annual",
+      targetId: year,
+      targetName: `Orcamento anual ${year}`,
+      progressPercent: roundMoney(annualProgressPercent),
+      alertPercent: annualAlertPercent,
+      plannedAmount: roundMoney(annualPlanned),
+      realizedAmount: roundMoney(annualRealized),
+    });
+  }
+
+  alerts.sort((a, b) => b.progressPercent - a.progressPercent);
+
+  const plannedHistoryMap = new Map();
+  for (const budget of historyBudgets) {
+    const key = toMonthKey(budget.year, budget.month);
+    plannedHistoryMap.set(key, (plannedHistoryMap.get(key) ?? 0) + (Number(budget.amount) || 0));
+  }
+
+  const realizedHistoryMap = new Map();
+  for (const transaction of historyTransactions) {
+    const dt = new Date(transaction.date);
+    if (Number.isNaN(dt.getTime())) continue;
+    const key = toMonthKey(dt.getFullYear(), dt.getMonth() + 1);
+    realizedHistoryMap.set(key, (realizedHistoryMap.get(key) ?? 0) + (Number(transaction.value) || 0));
+  }
+
+  const history = historyPeriod.map((item) => {
+    const plannedAmount = plannedHistoryMap.get(item.key) ?? 0;
+    const realizedAmount = realizedHistoryMap.get(item.key) ?? 0;
+    return {
+      month: item.key,
+      year: item.year,
+      monthNumber: item.month,
+      plannedAmount: roundMoney(plannedAmount),
+      realizedAmount: roundMoney(realizedAmount),
+      differenceAmount: roundMoney(plannedAmount - realizedAmount),
+      progressPercent: roundMoney(toProgressPercent(realizedAmount, plannedAmount)),
+    };
+  });
+
+  return {
+    period: { year, month, monthKey: toMonthKey(year, month) },
+    monthlyComparison: {
+      plannedAmount: roundMoney(monthlyPlanned),
+      realizedAmount: roundMoney(monthlyRealized),
+      differenceAmount: roundMoney(monthlyPlanned - monthlyRealized),
+      progressPercent: roundMoney(monthlyProgressPercent),
+    },
+    annualComparison: {
+      id: annualBudget?.id ?? null,
+      year,
+      plannedAmount: roundMoney(annualPlanned),
+      realizedAmount: roundMoney(annualRealized),
+      differenceAmount: roundMoney(annualPlanned - annualRealized),
+      progressPercent: roundMoney(annualProgressPercent),
+      alertPercent: annualBudget ? annualAlertPercent : null,
+      alertTriggered: annualAlertTriggered,
+    },
+    categoryProgress,
+    accountLimitProgress,
+    alerts,
+    history,
+  };
+}
+
 const AI_MAX_HISTORY = 12;
 const AI_MAX_MESSAGE_LENGTH = 1200;
 const AI_PROVIDER = String(process.env.AI_PROVIDER || "groq")
@@ -435,6 +761,9 @@ app.delete("/me", auth, async (req, res) => {
     await prisma.$transaction(async (tx) => {
       await tx.transaction.deleteMany({ where: { userId: req.userId } });
       await tx.goal.deleteMany({ where: { userId: req.userId } });
+      await tx.categoryBudget.deleteMany({ where: { userId: req.userId } });
+      await tx.accountLimit.deleteMany({ where: { userId: req.userId } });
+      await tx.annualBudget.deleteMany({ where: { userId: req.userId } });
       await tx.category.deleteMany({ where: { userId: req.userId } });
       await tx.account.deleteMany({ where: { userId: req.userId } });
       await tx.user.delete({ where: { id: req.userId } });
@@ -563,6 +892,463 @@ async function handleAiChat(req, res) {
 
 app.post("/ai/chat", auth, handleAiChat);
 app.post("/api/ai/chat", auth, handleAiChat);
+
+// Orcamentos
+app.get("/budgets/overview", auth, async (req, res) => {
+  try {
+    const current = currentYearMonth();
+    const year = parseBudgetYear(req.query?.year, current.year);
+    const month = parseBudgetMonth(req.query?.month, current.month);
+    const historyMonths = parseHistoryMonths(req.query?.months, 12);
+
+    const overview = await buildBudgetOverview(req.userId, year, month, historyMonths);
+    return res.json(overview);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar visao geral de orcamento.",
+      details: String(err),
+    });
+  }
+});
+
+app.get("/budgets/categories", auth, async (req, res) => {
+  try {
+    const current = currentYearMonth();
+    const year = parseBudgetYear(req.query?.year, current.year);
+    const month = parseBudgetMonth(req.query?.month, current.month);
+    const overview = await buildBudgetOverview(req.userId, year, month, 12);
+    return res.json({
+      year,
+      month,
+      items: overview.categoryProgress,
+      alerts: overview.alerts.filter((item) => item.kind === "category"),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar orcamentos por categoria.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/budgets/categories", auth, async (req, res) => {
+  try {
+    const categoryId = parseId(req.body?.categoryId);
+    const year = parseBudgetYear(req.body?.year);
+    const month = parseBudgetMonth(req.body?.month);
+    const amount = parsePositiveAmount(req.body?.amount);
+    const alertPercent = parseAlertPercent(req.body?.alertPercent, 80);
+
+    if (!categoryId) return res.status(400).json({ error: "categoryId invalido." });
+    if (!year) return res.status(400).json({ error: "year invalido." });
+    if (!month) return res.status(400).json({ error: "month invalido." });
+    if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+    if (alertPercent === null) {
+      return res.status(400).json({ error: "alertPercent deve estar entre 1 e 100." });
+    }
+
+    const category = await prisma.category.findFirst({
+      where: { id: categoryId, userId: req.userId },
+      select: { id: true, type: true },
+    });
+    if (!category) {
+      return res.status(404).json({ error: "Categoria nao encontrada." });
+    }
+    if (category.type !== "expense") {
+      return res.status(400).json({ error: "Orcamento por categoria aceita apenas tipo despesa." });
+    }
+
+    const saved = await prisma.categoryBudget.upsert({
+      where: {
+        userId_categoryId_year_month: { userId: req.userId, categoryId, year, month },
+      },
+      create: {
+        userId: req.userId,
+        categoryId,
+        year,
+        month,
+        amount,
+        alertPercent,
+      },
+      update: {
+        amount,
+        alertPercent,
+      },
+      include: {
+        category: {
+          select: { id: true, name: true, color: true, type: true },
+        },
+      },
+    });
+
+    return res.json(saved);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao salvar orcamento por categoria.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/budgets/categories/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.categoryBudget.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Orcamento nao encontrado." });
+
+    const data = {};
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "amount")) {
+      const amount = parsePositiveAmount(req.body?.amount);
+      if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+      data.amount = amount;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "alertPercent")) {
+      const alertPercent = parseAlertPercent(req.body?.alertPercent);
+      if (alertPercent === null) {
+        return res.status(400).json({ error: "alertPercent deve estar entre 1 e 100." });
+      }
+      data.alertPercent = alertPercent;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: "Envie amount e/ou alertPercent para atualizar." });
+    }
+
+    const updated = await prisma.categoryBudget.update({
+      where: { id },
+      data,
+      include: {
+        category: {
+          select: { id: true, name: true, color: true, type: true },
+        },
+      },
+    });
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar orcamento por categoria.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/budgets/categories/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.categoryBudget.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Orcamento nao encontrado." });
+
+    await prisma.categoryBudget.delete({ where: { id } });
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir orcamento por categoria.",
+      details: String(err),
+    });
+  }
+});
+
+app.get("/budgets/annual", auth, async (req, res) => {
+  try {
+    const current = currentYearMonth();
+    const year = parseBudgetYear(req.query?.year, current.year);
+    const { start, end } = getYearRange(year);
+
+    const [budget, realized] = await Promise.all([
+      prisma.annualBudget.findUnique({
+        where: { userId_year: { userId: req.userId, year } },
+      }),
+      prisma.transaction.aggregate({
+        where: {
+          userId: req.userId,
+          type: "expense",
+          date: { gte: start, lt: end },
+        },
+        _sum: { value: true },
+      }),
+    ]);
+
+    const plannedAmount = Number(budget?.amount) || 0;
+    const realizedAmount = Number(realized?._sum?.value) || 0;
+    const progressPercent = toProgressPercent(realizedAmount, plannedAmount);
+    const alertPercent = Number(budget?.alertPercent) || 80;
+
+    return res.json({
+      id: budget?.id ?? null,
+      year,
+      plannedAmount: roundMoney(plannedAmount),
+      realizedAmount: roundMoney(realizedAmount),
+      differenceAmount: roundMoney(plannedAmount - realizedAmount),
+      progressPercent: roundMoney(progressPercent),
+      alertPercent: budget ? alertPercent : null,
+      alertTriggered: plannedAmount > 0 && progressPercent >= alertPercent,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar orcamento anual.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/budgets/annual", auth, async (req, res) => {
+  try {
+    const year = parseBudgetYear(req.body?.year);
+    const amount = parsePositiveAmount(req.body?.amount);
+    const alertPercent = parseAlertPercent(req.body?.alertPercent, 80);
+
+    if (!year) return res.status(400).json({ error: "year invalido." });
+    if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+    if (alertPercent === null) {
+      return res.status(400).json({ error: "alertPercent deve estar entre 1 e 100." });
+    }
+
+    const saved = await prisma.annualBudget.upsert({
+      where: { userId_year: { userId: req.userId, year } },
+      create: {
+        userId: req.userId,
+        year,
+        amount,
+        alertPercent,
+      },
+      update: {
+        amount,
+        alertPercent,
+      },
+    });
+    return res.json(saved);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao salvar orcamento anual.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/budgets/annual/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.annualBudget.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Orcamento anual nao encontrado." });
+
+    const data = {};
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "amount")) {
+      const amount = parsePositiveAmount(req.body?.amount);
+      if (!amount) return res.status(400).json({ error: "amount deve ser positivo." });
+      data.amount = amount;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "alertPercent")) {
+      const alertPercent = parseAlertPercent(req.body?.alertPercent);
+      if (alertPercent === null) {
+        return res.status(400).json({ error: "alertPercent deve estar entre 1 e 100." });
+      }
+      data.alertPercent = alertPercent;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: "Envie amount e/ou alertPercent para atualizar." });
+    }
+
+    const updated = await prisma.annualBudget.update({
+      where: { id },
+      data,
+    });
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar orcamento anual.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/budgets/annual/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.annualBudget.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Orcamento anual nao encontrado." });
+
+    await prisma.annualBudget.delete({ where: { id } });
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir orcamento anual.",
+      details: String(err),
+    });
+  }
+});
+
+app.get("/budgets/accounts", auth, async (req, res) => {
+  try {
+    const current = currentYearMonth();
+    const year = parseBudgetYear(req.query?.year, current.year);
+    const month = parseBudgetMonth(req.query?.month, current.month);
+    const overview = await buildBudgetOverview(req.userId, year, month, 12);
+    return res.json({
+      year,
+      month,
+      items: overview.accountLimitProgress,
+      alerts: overview.alerts.filter((item) => item.kind === "account"),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao carregar limites por conta.",
+      details: String(err),
+    });
+  }
+});
+
+app.post("/budgets/accounts", auth, async (req, res) => {
+  try {
+    const accountId = parseId(req.body?.accountId);
+    const monthlyLimit = parsePositiveAmount(req.body?.monthlyLimit);
+    const alertPercent = parseAlertPercent(req.body?.alertPercent, 80);
+
+    if (!accountId) return res.status(400).json({ error: "accountId invalido." });
+    if (!monthlyLimit) {
+      return res.status(400).json({ error: "monthlyLimit deve ser positivo." });
+    }
+    if (alertPercent === null) {
+      return res.status(400).json({ error: "alertPercent deve estar entre 1 e 100." });
+    }
+
+    const account = await prisma.account.findFirst({
+      where: { id: accountId, userId: req.userId },
+      select: { id: true },
+    });
+    if (!account) return res.status(404).json({ error: "Conta nao encontrada." });
+
+    const saved = await prisma.accountLimit.upsert({
+      where: { userId_accountId: { userId: req.userId, accountId } },
+      create: {
+        userId: req.userId,
+        accountId,
+        monthlyLimit,
+        alertPercent,
+      },
+      update: {
+        monthlyLimit,
+        alertPercent,
+      },
+      include: {
+        account: {
+          select: { id: true, name: true, type: true, balance: true },
+        },
+      },
+    });
+    return res.json(saved);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao salvar limite por conta.",
+      details: String(err),
+    });
+  }
+});
+
+app.put("/budgets/accounts/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.accountLimit.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Limite por conta nao encontrado." });
+
+    const data = {};
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "monthlyLimit")) {
+      const monthlyLimit = parsePositiveAmount(req.body?.monthlyLimit);
+      if (!monthlyLimit) {
+        return res.status(400).json({ error: "monthlyLimit deve ser positivo." });
+      }
+      data.monthlyLimit = monthlyLimit;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "alertPercent")) {
+      const alertPercent = parseAlertPercent(req.body?.alertPercent);
+      if (alertPercent === null) {
+        return res.status(400).json({ error: "alertPercent deve estar entre 1 e 100." });
+      }
+      data.alertPercent = alertPercent;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Envie monthlyLimit e/ou alertPercent para atualizar." });
+    }
+
+    const updated = await prisma.accountLimit.update({
+      where: { id },
+      data,
+      include: {
+        account: {
+          select: { id: true, name: true, type: true, balance: true },
+        },
+      },
+    });
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao atualizar limite por conta.",
+      details: String(err),
+    });
+  }
+});
+
+app.delete("/budgets/accounts/:id", auth, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id invalido." });
+
+    const existing = await prisma.accountLimit.findFirst({
+      where: { id, userId: req.userId },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Limite por conta nao encontrado." });
+
+    await prisma.accountLimit.delete({ where: { id } });
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Falha ao excluir limite por conta.",
+      details: String(err),
+    });
+  }
+});
 
 // Conta
 app.post("/accounts", auth, async (req, res) => {
@@ -747,6 +1533,9 @@ app.delete("/accounts/:id", auth, async (req, res) => {
       });
     }
 
+    await prisma.accountLimit.deleteMany({
+      where: { userId: req.userId, accountId: id },
+    });
     await prisma.account.delete({ where: { id } });
     res.json({ ok: true });
   } catch (err) {
@@ -876,6 +1665,9 @@ app.delete("/categories/:id", auth, async (req, res) => {
       });
     }
 
+    await prisma.categoryBudget.deleteMany({
+      where: { userId: req.userId, categoryId: id },
+    });
     await prisma.category.delete({ where: { id } });
     res.json({ ok: true });
   } catch (err) {

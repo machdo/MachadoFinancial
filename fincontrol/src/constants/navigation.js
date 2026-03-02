@@ -7,6 +7,7 @@ import {
   Target,
   BarChart3,
   CandlestickChart,
+  PiggyBank,
 } from "lucide-react";
 
 export const NAV_ITEMS = [
@@ -16,6 +17,7 @@ export const NAV_ITEMS = [
   { key: "accounts", label: "Contas", icon: Wallet },
   { key: "goals", label: "Metas", icon: Target },
   { key: "investments", label: "Investimentos", icon: CandlestickChart },
+  { key: "budgets", label: "Orcamentos", icon: PiggyBank },
   { key: "reports", label: "Relatorios", icon: BarChart3 },
   { key: "profile", label: "Minha conta", icon: User },
 ];

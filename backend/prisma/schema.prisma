@@ -16,6 +16,9 @@ model User {
   categories   Category[]
   transactions Transaction[]
   goals        Goal[]
+  categoryBudgets CategoryBudget[]
+  annualBudgets AnnualBudget[]
+  accountLimits AccountLimit[]
   createdAt    DateTime      @default(now())
 }
 
@@ -27,6 +30,7 @@ model Account {
   userId       Int
   user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]
+  accountLimits AccountLimit[]
 }
 
 model Category {
@@ -37,6 +41,7 @@ model Category {
   userId       Int
   user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]
+  categoryBudgets CategoryBudget[]
 }
 
 model Transaction {
@@ -61,4 +66,47 @@ model Goal {
   deadline     DateTime
   userId       Int
   user         User     @relation(fields: [userId], references: [id])
+}
+
+model CategoryBudget {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  categoryId  Int
+  year        Int
+  month       Int
+  amount      Float
+  alertPercent Int     @default(80)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+  category    Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([userId, categoryId, year, month])
+}
+
+model AnnualBudget {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  year         Int
+  amount       Float
+  alertPercent Int      @default(80)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, year])
+}
+
+model AccountLimit {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  accountId    Int
+  monthlyLimit Float
+  alertPercent Int      @default(80)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+  account      Account  @relation(fields: [accountId], references: [id])
+
+  @@unique([userId, accountId])
 }
